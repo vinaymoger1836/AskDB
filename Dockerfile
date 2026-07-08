@@ -27,7 +27,6 @@ RUN python -m data.seed
 # README) so HF's health check reaches it with no port ambiguity.
 EXPOSE 7860
 
-# TEMPORARY DIAGNOSTIC LAUNCH: echo checkpoints before Streamlit so the HF
-# Container log shows exactly how far the container gets. Revert to the plain
-# `streamlit run ...` CMD once we've identified the failure.
-CMD ["sh", "-c", "echo '>>> [1] container CMD is running'; python --version; echo '>>> [2] importing streamlit + pandas...'; python -c 'import streamlit, pandas; print(\">>> [3] imports OK, streamlit\", streamlit.__version__)'; echo '>>> [4] launching streamlit on 7860'; exec streamlit run ui/streamlit_app.py --server.port=7860 --server.address=0.0.0.0 --server.headless=true --logger.level=info"]
+# Launch Streamlit on HF's default Docker port 7860. headless=true skips the
+# first-run email prompt; address 0.0.0.0 makes it reachable by HF's proxy.
+CMD ["streamlit", "run", "ui/streamlit_app.py", "--server.port=7860", "--server.address=0.0.0.0", "--server.headless=true"]

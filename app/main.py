@@ -36,10 +36,18 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(title="AskDB API", version="0.1.0", lifespan=lifespan)
 
 
+class HistoryTurn(BaseModel):
+    """A prior conversation turn: the question asked and the SQL that answered it."""
+
+    question: str
+    sql: str | None = None
+
+
 class QueryRequest(BaseModel):
-    """A natural-language question to answer."""
+    """A natural-language question to answer, with optional conversation history."""
 
     question: str = Field(..., min_length=1, max_length=500)
+    history: list[HistoryTurn] = Field(default_factory=list)
 
 
 class QueryResponse(BaseModel):
@@ -73,7 +81,10 @@ def schema() -> dict[str, str]:
 def query(request: QueryRequest) -> QueryResponse:
     """Answer a question: generate, validate, execute, and summarise SQL."""
     try:
-        result = agent.answer(request.question)
+        result = agent.answer(
+            request.question,
+            history=[turn.model_dump() for turn in request.history],
+        )
     except ConfigError as exc:
         # Missing GROQ_API_KEY, etc. — a configuration problem, not the user's fault.
         raise HTTPException(status_code=503, detail=str(exc)) from exc

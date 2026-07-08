@@ -82,12 +82,15 @@ def answer(
     schema: str | None = None,
     max_retries: int | None = None,
     max_limit: int | None = None,
+    history: list[dict[str, str]] | None = None,
 ) -> AgentResult:
     """Answer a natural-language question with a validated read-only SQL query.
 
-    Loops up to `max_retries + 1` times, feeding any validation/execution error
-    back to the model. Returns an AgentResult; on total failure `error` is set
-    (the caller shows a friendly message rather than crashing).
+    `history` is prior conversation turns ({"question", "sql"}) so follow-up
+    questions resolve. Loops up to `max_retries + 1` times, feeding any
+    validation/execution error back to the model. Returns an AgentResult; on
+    total failure `error` is set (the caller shows a friendly message rather
+    than crashing).
     """
     question = (question or "").strip()
     if not question:
@@ -105,7 +108,9 @@ def answer(
     for attempt in range(1, retries + 2):
         result.attempts = attempt
         try:
-            messages = build_sql_prompt(schema, question, prior_sql, prior_error)
+            messages = build_sql_prompt(
+                schema, question, prior_sql, prior_error, history=history
+            )
             raw = llm(messages)
         except Exception as exc:  # external call — surface, don't crash the app
             logger.error("LLM call failed on attempt %d: %s", attempt, exc)

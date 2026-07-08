@@ -17,26 +17,59 @@ _SQL_SYSTEM = (
     "- Prefer explicit column lists and readable aliases over SELECT *.\n"
     "- When aggregating money, round to 2 decimals.\n"
     "- Dates are stored as ISO text (YYYY-MM-DD); filter a year with "
-    "strftime('%Y', <col>) = '2023' or <col> LIKE '2023%'."
+    "strftime('%Y', <col>) = '2023' or <col> LIKE '2023%'.\n"
+    "- This may be a multi-turn conversation. If earlier questions and their SQL "
+    "are provided, use them to resolve follow-up references (e.g. 'that', 'those', "
+    "'break it down by month') — but always answer the CURRENT question."
 )
+
+# Keep the prompt bounded: only the most recent turns are useful for follow-ups.
+_MAX_HISTORY_TURNS = 3
+
+
+def _format_history(history: list[dict[str, str]] | None) -> str:
+    """Render prior conversation turns (question + its SQL) as prompt context."""
+    if not history:
+        return ""
+    lines = []
+    for turn in history[-_MAX_HISTORY_TURNS:]:
+        question = (turn.get("question") or "").strip()
+        sql = (turn.get("sql") or "").strip()
+        if question:
+            lines.append(f"Earlier question: {question}\nSQL used: {sql}")
+    if not lines:
+        return ""
+    return "Conversation so far:\n" + "\n\n".join(lines) + "\n\n"
 
 
 def build_sql_prompt(
-    schema: str, question: str, prior_sql: str | None = None, prior_error: str | None = None
+    schema: str,
+    question: str,
+    prior_sql: str | None = None,
+    prior_error: str | None = None,
+    history: list[dict[str, str]] | None = None,
 ) -> list[dict[str, str]]:
     """Build the chat messages that ask the LLM for a SQL query.
 
-    When `prior_error` is provided, the previous (failed) SQL and its error are
+    `history` (prior question/SQL turns) lets follow-up questions resolve. When
+    `prior_error` is provided, the previous (failed) SQL and its error are
     included so the model can correct itself.
     """
-    user = f"Database schema:\n{schema}\n\nQuestion: {question}\n\nSQL query:"
+    context = _format_history(history)
     if prior_error:
         user = (
             f"Database schema:\n{schema}\n\n"
+            f"{context}"
             f"Question: {question}\n\n"
             f"Your previous query failed:\n{prior_sql}\n\n"
             f"Error: {prior_error}\n\n"
             "Return a corrected single SELECT query. SQL query:"
+        )
+    else:
+        user = (
+            f"Database schema:\n{schema}\n\n"
+            f"{context}"
+            f"Question: {question}\n\nSQL query:"
         )
     return [
         {"role": "system", "content": _SQL_SYSTEM},

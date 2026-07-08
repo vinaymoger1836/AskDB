@@ -89,3 +89,20 @@ def test_empty_question_is_rejected() -> None:
     result = agent.answer("   ", llm=FakeLLM([]))
     assert not result.ok
     assert result.error is not None
+
+
+def test_history_is_threaded_into_the_prompt() -> None:
+    # A follow-up question should carry prior turns into the SQL prompt so the
+    # model can resolve references like "break it down by month".
+    fake = FakeLLM(["SELECT name FROM products"])
+    history = [
+        {"question": "top products by revenue", "sql": "SELECT name FROM products"}
+    ]
+    result = agent.answer(
+        "break it down by month", llm=fake, max_retries=0, history=history
+    )
+
+    assert result.ok
+    sql_prompt = fake.calls[0][-1]["content"]
+    assert "top products by revenue" in sql_prompt
+    assert "Conversation so far" in sql_prompt
