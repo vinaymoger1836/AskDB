@@ -3,9 +3,8 @@ title: AskDB
 emoji: 🧮
 colorFrom: indigo
 colorTo: green
-sdk: streamlit
-sdk_version: 1.58.0
-app_file: ui/streamlit_app.py
+sdk: docker
+app_port: 8501
 pinned: false
 short_description: Ask questions in plain English, get safe SQL + a chart
 ---
@@ -86,6 +85,7 @@ never hardcoded. See `.env.example`. Required: `GROQ_API_KEY`. Optional tunables
 
 ## Deploy (Hugging Face Spaces)
 
-The Space runs the Streamlit app (`sdk: streamlit`, `app_file: ui/streamlit_app.py`) which
-answers in-process, so no separate API host is needed. Set `GROQ_API_KEY` in
-**Settings → Repository secrets** — never commit it.
+The Space is a **Docker** Space (`sdk: docker`, `app_port: 8501`): the `Dockerfile` installs
+the deps, bakes the seeded database into the image, and launches Streamlit
+(`streamlit run ui/streamlit_app.py`), which answers in-process — no separate API host is
+needed. Set `GROQ_API_KEY` in **Settings → Variables and secrets** as a secret — never commit it.

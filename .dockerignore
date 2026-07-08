@@ -1,0 +1,16 @@
+# Keep the image lean and never bake secrets/local docs into it.
+# NOTE: never exclude app/, ui/, or data/ — they are the application.
+.git
+.venv
+venv
+__pycache__
+*.pyc
+.pytest_cache
+.ruff_cache
+.mypy_cache
+.env
+.env.*
+!.env.example
+CLAUDE.md
+INTERVIEW_CHEATSHEET.md
+.claude
