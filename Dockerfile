@@ -6,6 +6,10 @@
 
 FROM python:3.12-slim
 
+# Unbuffered stdout/stderr so Streamlit's startup banner (or any error) shows up
+# immediately in the HF Container log instead of being swallowed by buffering.
+ENV PYTHONUNBUFFERED=1
+
 WORKDIR /app
 
 # Install Python dependencies first for better layer caching.
@@ -22,7 +26,6 @@ RUN python -m data.seed
 # Streamlit listens here; HF proxies this port (declared as app_port in README).
 EXPOSE 8501
 
-# Launch Streamlit explicitly. headless=true skips the first-run email prompt
-# that was hanging the legacy launcher; address 0.0.0.0 makes it reachable.
-CMD ["streamlit", "run", "ui/streamlit_app.py", \
-     "--server.port=8501", "--server.address=0.0.0.0", "--server.headless=true"]
+# Launch Streamlit explicitly. headless=true skips the first-run email prompt;
+# address 0.0.0.0 makes it reachable by HF's proxy.
+CMD ["streamlit", "run", "ui/streamlit_app.py", "--server.port=8501", "--server.address=0.0.0.0", "--server.headless=true"]
