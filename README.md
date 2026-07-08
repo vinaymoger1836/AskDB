@@ -1,0 +1,91 @@
+---
+title: AskDB
+emoji: 🧮
+colorFrom: indigo
+colorTo: green
+sdk: streamlit
+sdk_version: 1.59.0
+app_file: ui/streamlit_app.py
+pinned: false
+short_description: Ask questions in plain English, get safe SQL + a chart
+---
+
+# AskDB — Text-to-SQL Analytics Agent
+
+> The block above is Hugging Face Spaces configuration. It is ignored by GitHub
+> rendering and required by HF to launch the Streamlit app.
+
+Ask a question in plain English → an LLM writes a **read-only** SQL query grounded in the
+database schema → the query is validated and run safely → you get the SQL, a results table,
+an auto-chart, and a one-line answer. Generated SQL is treated as **untrusted input**.
+
+## What it does
+
+1. You type a question, e.g. *"What were the top 5 products by revenue in 2023?"*
+2. The agent reads the DB schema and prompts Llama 3.3 70B (via Groq) for a single SELECT query.
+3. A `sqlglot` **guardrail** validates it: SELECT-only, no writes/DDL/PRAGMA, one statement, and
+   an enforced `LIMIT`.
+4. It runs on a **read-only** SQLite connection.
+5. On a SQL error, the error is fed back to the model and the query is retried (self-correction).
+6. You get the SQL, a table, an auto-chart, and a natural-language summary.
+
+## Architecture
+
+```
+Streamlit UI (question, sample chips, table, chart, "Show SQL")
+      │  calls FastAPI /query when reachable, else runs the agent in-process
+      ▼
+FastAPI  /query  ── app/agent.answer()
+      │   1. get_schema()          → table/column DDL text
+      │   2. build prompt(schema, question)
+      │   3. LLM (Groq)            → candidate SQL
+      │   4. guardrails.validate_and_prepare()  → SELECT-only, LIMIT   [safety]
+      │   5. db.run_query()  on read-only SQLite → rows
+      │        └─ on error → feed error back → retry (≤2)
+      │   6. LLM → one-line summary
+      ▼
+SQLite demo database  (data/sales.db — seeded e-commerce dataset)
+```
+
+## The safety layer (`app/guardrails.py`)
+
+Before any generated SQL runs, it is parsed with `sqlglot` and rejected unless it is a single
+read-only query. Writes/DDL/commands (`INSERT/UPDATE/DELETE/DROP/ALTER/CREATE/PRAGMA/ATTACH`)
+are blocked at the AST level, a `LIMIT` is injected or clamped, and execution uses a read-only
+connection with a statement timeout. User text is never interpolated into SQL — only the
+model's validated query runs.
+
+## Tech stack
+
+Groq (Llama 3.3 70B) · `sqlglot` · SQLite · FastAPI + Pydantic · Streamlit · Plotly · pytest · ruff.
+
+## Run locally
+
+```bash
+python -m venv .venv && source .venv/Scripts/activate   # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+cp .env.example .env      # then add your GROQ_API_KEY
+
+python -m data.seed                 # build the demo database
+uvicorn app.main:app --reload       # backend  (terminal 1)
+streamlit run ui/streamlit_app.py   # UI       (terminal 2)
+```
+
+Tests need no API key (the LLM is mocked):
+
+```bash
+python -m pytest -q
+ruff check .
+```
+
+## Configuration
+
+All secrets are read only from the environment (`.env` locally, Space secrets when deployed) —
+never hardcoded. See `.env.example`. Required: `GROQ_API_KEY`. Optional tunables: `GROQ_MODEL`,
+`DB_PATH`, `MAX_LIMIT`, `AGENT_MAX_RETRIES`, `QUERY_TIMEOUT_S`, `ASKDB_API_BASE`.
+
+## Deploy (Hugging Face Spaces)
+
+The Space runs the Streamlit app (`sdk: streamlit`, `app_file: ui/streamlit_app.py`) which
+answers in-process, so no separate API host is needed. Set `GROQ_API_KEY` in
+**Settings → Repository secrets** — never commit it.

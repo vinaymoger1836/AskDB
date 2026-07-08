@@ -1,0 +1,28 @@
+# Direct (top-level) dependencies for AskDB. Exact versions are pinned in
+# requirements.txt (generated via pip freeze). Edit this file, reinstall, refreeze.
+
+# --- Core config ---
+python-dotenv
+
+# --- LLM (Groq / Llama 3.3 70B) ---
+langchain-groq
+
+# --- SQL safety (the guardrail parser) ---
+sqlglot
+
+# --- Data / charts ---
+pandas
+plotly
+
+# --- API ---
+fastapi
+uvicorn[standard]
+pydantic
+
+# --- UI ---
+streamlit
+requests
+
+# --- Dev / test ---
+pytest
+ruff

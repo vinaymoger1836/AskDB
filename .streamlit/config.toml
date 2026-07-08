@@ -1,0 +1,7 @@
+[server]
+# We don't need live reload for normal use; disable the file watcher to avoid
+# noisy import-time warnings. Restart Streamlit manually after edits.
+fileWatcherType = "none"
+
+[browser]
+gatherUsageStats = false
