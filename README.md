@@ -4,7 +4,7 @@ emoji: 🧮
 colorFrom: indigo
 colorTo: green
 sdk: streamlit
-sdk_version: 1.59.0
+sdk_version: 1.58.0
 app_file: ui/streamlit_app.py
 pinned: false
 short_description: Ask questions in plain English, get safe SQL + a chart
