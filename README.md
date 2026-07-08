@@ -4,7 +4,7 @@ emoji: 🧮
 colorFrom: indigo
 colorTo: green
 sdk: docker
-app_port: 8501
+app_port: 7860
 pinned: false
 short_description: Ask questions in plain English, get safe SQL + a chart
 ---

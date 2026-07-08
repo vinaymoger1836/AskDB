@@ -23,10 +23,11 @@ COPY . .
 # runtime and never needs to write to the filesystem to serve a query.
 RUN python -m data.seed
 
-# Streamlit listens here; HF proxies this port (declared as app_port in README).
-EXPOSE 8501
+# Streamlit listens on HF's default Docker port 7860 (declared as app_port in
+# README) so HF's health check reaches it with no port ambiguity.
+EXPOSE 7860
 
 # TEMPORARY DIAGNOSTIC LAUNCH: echo checkpoints before Streamlit so the HF
 # Container log shows exactly how far the container gets. Revert to the plain
 # `streamlit run ...` CMD once we've identified the failure.
-CMD ["sh", "-c", "echo '>>> [1] container CMD is running'; python --version; echo '>>> [2] importing streamlit + pandas...'; python -c 'import streamlit, pandas; print(\">>> [3] imports OK, streamlit\", streamlit.__version__)'; echo '>>> [4] launching streamlit'; exec streamlit run ui/streamlit_app.py --server.port=8501 --server.address=0.0.0.0 --server.headless=true --logger.level=info"]
+CMD ["sh", "-c", "echo '>>> [1] container CMD is running'; python --version; echo '>>> [2] importing streamlit + pandas...'; python -c 'import streamlit, pandas; print(\">>> [3] imports OK, streamlit\", streamlit.__version__)'; echo '>>> [4] launching streamlit on 7860'; exec streamlit run ui/streamlit_app.py --server.port=7860 --server.address=0.0.0.0 --server.headless=true --logger.level=info"]
