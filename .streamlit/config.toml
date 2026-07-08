@@ -1,4 +1,8 @@
 [server]
+# headless=true skips Streamlit's first-run "enter your email" onboarding prompt,
+# which otherwise blocks on stdin and hangs the app at "Starting" on Hugging Face
+# Spaces (and in any non-interactive/container environment).
+headless = true
 # We don't need live reload for normal use; disable the file watcher to avoid
 # noisy import-time warnings. Restart Streamlit manually after edits.
 fileWatcherType = "none"
