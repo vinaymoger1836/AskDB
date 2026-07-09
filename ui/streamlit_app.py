@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import sys
+import tempfile
 from pathlib import Path
 
 import requests
@@ -23,6 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.charts import choose_chart  # noqa: E402
 from app.config import ConfigError, settings  # noqa: E402
+from app.ingest import IngestError, ingest_upload  # noqa: E402
 from app.logging_config import configure_logging  # noqa: E402
 from data.seed import ensure_database  # noqa: E402
 
@@ -30,6 +32,9 @@ configure_logging()
 logger = logging.getLogger(__name__)
 
 st.set_page_config(page_title="AskDB", page_icon="🧮", layout="centered")
+
+# The always-present built-in source. Uploaded CSV/Excel files add more.
+DEMO_SOURCE = "Demo e-commerce DB"
 
 SAMPLE_QUESTIONS = [
     "What were the top 5 products by revenue in 2023?",
@@ -85,12 +90,18 @@ def _query_via_api(question: str, history: list[dict]) -> dict | None:
     return resp.json()
 
 
-def _query_in_process(question: str, history: list[dict]) -> dict:
-    """Answer the question by calling the agent directly (HF Spaces fallback)."""
+def _query_in_process(
+    question: str, history: list[dict], db_path: str | None
+) -> dict:
+    """Answer the question by calling the agent directly (HF Spaces fallback).
+
+    Also the only path for uploaded sources: their SQLite file lives in this
+    session's temp dir, which the separate FastAPI process can't see.
+    """
     from app import agent  # local import so the API path doesn't load it needlessly
 
     try:
-        result = agent.answer(question, history=history)
+        result = agent.answer(question, history=history, db_path=db_path)
     except ConfigError as exc:
         return {"error": str(exc), "question": question}
     return {
@@ -104,14 +115,22 @@ def _query_in_process(question: str, history: list[dict]) -> dict:
     }
 
 
-def run_query(question: str, history: list[dict] | None = None) -> dict:
-    """Answer a question via the API when available, else in-process."""
+def run_query(
+    question: str, history: list[dict] | None = None, db_path: str | None = None
+) -> dict:
+    """Answer a question against the active source.
+
+    The demo DB tries the FastAPI backend first (local two-process setup) and
+    falls back to in-process. Uploaded sources always run in-process, since the
+    API process has no access to this session's uploaded database file.
+    """
     history = history or []
-    result = _query_via_api(question, history)
-    if result is None:
+    if db_path is None:
+        result = _query_via_api(question, history)
+        if result is not None:
+            return result
         logger.info("API unreachable at %s; answering in-process.", settings.api_base)
-        result = _query_in_process(question, history)
-    return result
+    return _query_in_process(question, history, db_path)
 
 
 def _conversation_history(messages: list[dict]) -> list[dict]:
@@ -129,8 +148,12 @@ def _conversation_history(messages: list[dict]) -> list[dict]:
     return turns
 
 
-def _render_answer(result: dict) -> None:
-    """Render an assistant answer: summary, SQL, table, and an auto-chart."""
+def _render_answer(result: dict, show_chart: bool = True) -> None:
+    """Render an assistant answer: summary, SQL, table, and an auto-chart.
+
+    `show_chart` is captured per answer when it's produced, so toggling charts
+    only affects future queries — it never re-renders past turns.
+    """
     if result.get("error"):
         st.error(result["error"])
         if result.get("sql"):
@@ -160,41 +183,125 @@ def _render_answer(result: dict) -> None:
         use_container_width=True,
     )
 
-    fig = choose_chart(columns, [tuple(r) for r in rows])
-    if fig is not None:
-        st.plotly_chart(fig, use_container_width=True)
+    # Charts are opt-out: rendering Plotly can be slow, so skip the work entirely
+    # (figure build + client render) when charts were off for this answer.
+    if show_chart:
+        fig = choose_chart(columns, [tuple(r) for r in rows])
+        if fig is not None:
+            st.plotly_chart(fig, use_container_width=True)
+
+
+def _active_db_path() -> str | None:
+    """Return the SQLite path for the selected source (None ⇒ demo DB)."""
+    name = st.session_state.get("active_source", DEMO_SOURCE)
+    if name == DEMO_SOURCE:
+        return None
+    source = st.session_state.sources.get(name)
+    return str(source.db_path) if source else None
 
 
 def _handle_question(question: str) -> None:
     """Append the user turn, run the query, and append the assistant turn."""
     # Capture prior turns for follow-up context before adding the current one.
     history = _conversation_history(st.session_state.messages)
+    db_path = _active_db_path()
+    # Freeze the current charts preference onto this answer so later toggling
+    # only changes future queries, not this one.
+    show_chart = st.session_state.get("show_charts", True)
     st.session_state.messages.append({"role": "user", "content": question})
     with st.chat_message("user", avatar=_USER_AVATAR):
         st.markdown(question)
     with st.chat_message("assistant", avatar=_ASSISTANT_AVATAR):
         with st.spinner("Writing and running SQL…"):
-            result = run_query(question, history)
-        _render_answer(result)
-    st.session_state.messages.append({"role": "assistant", "result": result})
+            result = run_query(question, history, db_path)
+        _render_answer(result, show_chart)
+    st.session_state.messages.append(
+        {"role": "assistant", "result": result, "show_chart": show_chart}
+    )
+
+
+def _ingest_uploads(uploaded_files: list) -> None:
+    """Load any newly uploaded CSV/Excel files into session-scoped sources."""
+    for upload in uploaded_files:
+        # file_id is stable across reruns, so each file is ingested only once.
+        if upload.file_id in st.session_state.processed_upload_ids:
+            continue
+        st.session_state.processed_upload_ids.add(upload.file_id)
+        try:
+            source = ingest_upload(
+                upload.name, upload.getvalue(), st.session_state.upload_dir
+            )
+        except IngestError as exc:
+            st.error(f"Couldn't load {upload.name}: {exc}")
+            continue
+        # Disambiguate if a file of the same name was uploaded before.
+        name = source.name
+        suffix = 2
+        while name in st.session_state.sources:
+            name = f"{source.name} ({suffix})"
+            suffix += 1
+        source.name = name
+        st.session_state.sources[name] = source
+        st.session_state.active_source = name
+        st.toast(f"Loaded {name}: {', '.join(source.tables)}", icon="📄")
+
+
+def _select_source() -> None:
+    """Render the data-source picker; switching sources starts a fresh chat."""
+    names = [DEMO_SOURCE, *st.session_state.sources.keys()]
+    active = st.session_state.active_source
+    if active not in names:
+        active = DEMO_SOURCE
+    choice = st.radio("Data source", names, index=names.index(active))
+    if choice != st.session_state.active_source:
+        # Prior turns reference the old schema; clear them to avoid confusion.
+        st.session_state.active_source = choice
+        st.session_state.messages = []
+        st.rerun()
 
 
 def _sidebar() -> None:
-    """Render the sidebar: about, schema, and a clear-chat control."""
+    """Render the sidebar: data sources, upload, schema, and clear-chat."""
+    from app.db import get_schema
+
     with st.sidebar:
-        st.subheader("About")
-        st.write(
-            "AskDB turns natural language into safe SQL over a seeded e-commerce "
-            "database. Generated SQL is treated as untrusted input: SELECT-only, "
-            "no writes, an enforced row limit, and a read-only connection."
+        st.subheader("Data source")
+        st.caption("Query the demo database, or upload your own CSV/Excel.")
+
+        uploaded = st.file_uploader(
+            "Upload CSV or Excel",
+            type=["csv", "xlsx", "xls"],
+            accept_multiple_files=True,
+            help="Each file becomes a queryable source. Excel sheets become tables.",
         )
+        if uploaded:
+            _ingest_uploads(uploaded)
+
+        _select_source()
+
+        st.toggle(
+            "📊 Show charts",
+            key="show_charts",
+            help="Turn off to skip chart rendering for faster answers.",
+        )
+
         if st.button("🗑️ Clear chat", use_container_width=True):
             st.session_state.messages = []
             st.rerun()
-        with st.expander("Database schema"):
-            from app.db import get_schema
 
-            st.code(get_schema(), language="sql")
+        with st.expander("Schema"):
+            try:
+                st.code(get_schema(_active_db_path()), language="sql")
+            except Exception as exc:  # a bad source shouldn't break the sidebar
+                st.warning(f"Couldn't read schema: {exc}")
+
+        st.subheader("About")
+        st.write(
+            "AskDB turns natural language into safe SQL. Generated SQL is treated "
+            "as untrusted input: SELECT-only, no writes, an enforced row limit, "
+            "and a read-only connection — the same guardrails for uploads as for "
+            "the demo data."
+        )
 
 
 def main() -> None:
@@ -210,8 +317,21 @@ def main() -> None:
 
     if "messages" not in st.session_state:
         st.session_state.messages = []
+    # Session-scoped upload state: a temp dir plus the sources built from it.
+    if "upload_dir" not in st.session_state:
+        st.session_state.upload_dir = tempfile.mkdtemp(prefix="askdb_uploads_")
+    if "sources" not in st.session_state:
+        st.session_state.sources = {}
+    if "processed_upload_ids" not in st.session_state:
+        st.session_state.processed_upload_ids = set()
+    if "active_source" not in st.session_state:
+        st.session_state.active_source = DEMO_SOURCE
+    if "show_charts" not in st.session_state:
+        st.session_state.show_charts = True
 
     _sidebar()
+
+    on_demo = st.session_state.active_source == DEMO_SOURCE
 
     # Replay the conversation so far.
     for message in st.session_state.messages:
@@ -220,18 +340,30 @@ def main() -> None:
                 st.markdown(message["content"])
         else:
             with st.chat_message("assistant", avatar=_ASSISTANT_AVATAR):
-                _render_answer(message["result"])
+                _render_answer(message["result"], message.get("show_chart", True))
 
     # On an empty conversation, offer sample questions as clickable starters.
+    # Samples only fit the demo schema; uploaded sources get a plain prompt.
     pending: str | None = None
     if not st.session_state.messages:
-        st.write("**Try one:**")
-        for sample in SAMPLE_QUESTIONS:
-            if st.button(sample, use_container_width=True):
-                pending = sample
+        if on_demo:
+            st.write("**Try one:**")
+            for sample in SAMPLE_QUESTIONS:
+                if st.button(sample, use_container_width=True):
+                    pending = sample
+        else:
+            st.info(
+                f"Ask a question about **{st.session_state.active_source}** — "
+                "the agent reads its columns and writes the SQL for you."
+            )
 
     # Pinned chat input at the bottom.
-    typed = st.chat_input("Ask about the sales data…")
+    placeholder = (
+        "Ask about the sales data…"
+        if on_demo
+        else f"Ask about {st.session_state.active_source}…"
+    )
+    typed = st.chat_input(placeholder)
     if typed and typed.strip():
         pending = typed.strip()
 

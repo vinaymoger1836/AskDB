@@ -11,6 +11,7 @@ import logging
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from app.config import settings
 from app.db import QueryError, get_schema, run_query
@@ -83,11 +84,14 @@ def answer(
     max_retries: int | None = None,
     max_limit: int | None = None,
     history: list[dict[str, str]] | None = None,
+    db_path: str | Path | None = None,
 ) -> AgentResult:
     """Answer a natural-language question with a validated read-only SQL query.
 
     `history` is prior conversation turns ({"question", "sql"}) so follow-up
-    questions resolve. Loops up to `max_retries + 1` times, feeding any
+    questions resolve. `db_path` selects which SQLite database to query (an
+    uploaded CSV/Excel source, or None for the default demo DB) — the schema and
+    execution both target it. Loops up to `max_retries + 1` times, feeding any
     validation/execution error back to the model. Returns an AgentResult; on
     total failure `error` is set (the caller shows a friendly message rather
     than crashing).
@@ -97,7 +101,7 @@ def answer(
         return AgentResult(question=question, error="Please enter a question.")
 
     llm = llm or _default_llm()
-    schema = schema if schema is not None else get_schema()
+    schema = schema if schema is not None else get_schema(db_path)
     retries = settings.agent_max_retries if max_retries is None else max_retries
     limit = settings.max_limit if max_limit is None else max_limit
 
@@ -120,7 +124,7 @@ def answer(
         candidate = _strip_sql(raw)
         try:
             safe_sql = validate_and_prepare(candidate, max_limit=limit)
-            columns, rows = run_query(safe_sql)
+            columns, rows = run_query(safe_sql, db_path)
         except (GuardrailError, QueryError) as exc:
             logger.info("Attempt %d rejected/failed: %s", attempt, exc)
             prior_sql = candidate
