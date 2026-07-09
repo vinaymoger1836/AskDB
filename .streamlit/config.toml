@@ -6,6 +6,14 @@ headless = true
 # We don't need live reload for normal use; disable the file watcher to avoid
 # noisy import-time warnings. Restart Streamlit manually after edits.
 fileWatcherType = "none"
+# st.file_uploader was returning HTTP 403 from the upload endpoint
+# (/_stcore/upload_file). Streamlit's XSRF token can't be validated when the app
+# runs headless or behind a reverse proxy (e.g. Hugging Face Spaces), so the
+# upload POST is rejected. This is a public, read-only demo with no authenticated
+# session for CSRF to abuse, so relaxing both is an acceptable tradeoff to make
+# uploads work. (Streamlit also requires CORS off when XSRF is off.)
+enableXsrfProtection = false
+enableCORS = false
 
 [browser]
 gatherUsageStats = false

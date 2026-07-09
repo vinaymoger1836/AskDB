@@ -74,6 +74,24 @@ def test_excel_each_sheet_becomes_a_table(tmp_path: Path) -> None:
     assert rows == [("Ada",)]
 
 
+def test_large_file_is_capped_and_flagged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(ingest, "MAX_ROWS_PER_TABLE", 5)
+    frame = pd.DataFrame({"n": range(20)})
+    source = ingest_upload("big.csv", _csv_bytes(frame), tmp_path)
+
+    assert source.truncated is True
+    _, rows = run_query("SELECT COUNT(*) FROM big", source.db_path)
+    assert rows == [(5,)]
+
+
+def test_within_cap_is_not_flagged(tmp_path: Path) -> None:
+    frame = pd.DataFrame({"n": range(20)})
+    source = ingest_upload("small.csv", _csv_bytes(frame), tmp_path)
+    assert source.truncated is False
+
+
 def test_empty_file_raises(tmp_path: Path) -> None:
     with pytest.raises(IngestError):
         ingest_upload("empty.csv", b"", tmp_path)

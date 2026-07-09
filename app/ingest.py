@@ -23,8 +23,10 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
-# Guard against pathologically large uploads: cap rows written per table.
-MAX_ROWS_PER_TABLE = 100_000
+# Guard against pathologically large uploads: cap rows written per table. Set
+# high enough that a normal upload (a 16 MB CSV is well under this) is never
+# truncated; only genuinely huge files hit the cap, and then the UI warns.
+MAX_ROWS_PER_TABLE = 1_000_000
 
 _CSV_SUFFIXES = {".csv"}
 _EXCEL_SUFFIXES = {".xlsx", ".xls"}
@@ -46,6 +48,7 @@ class DataSource:
     name: str
     db_path: Path
     tables: list[str] = field(default_factory=list)
+    truncated: bool = False  # True if any table hit MAX_ROWS_PER_TABLE
 
 
 def _sanitize_identifier(raw: object, fallback: str) -> str:
@@ -129,6 +132,7 @@ def ingest_upload(filename: str, data: bytes, dest_dir: str | Path) -> DataSourc
     db_path = dest / f"{stem}_{uuid4().hex[:8]}.db"
 
     written: list[str] = []
+    truncated = False
     conn = sqlite3.connect(db_path)
     try:
         for raw, table in zip(raw_names, unique_names, strict=True):
@@ -136,7 +140,9 @@ def ingest_upload(filename: str, data: bytes, dest_dir: str | Path) -> DataSourc
             if frame.empty or len(frame.columns) == 0:
                 logger.info("Skipping empty sheet/table %r in %s", raw, filename)
                 continue
-            _prepare_frame(frame).to_sql(table, conn, index=False, if_exists="replace")
+            prepared = _prepare_frame(frame)
+            truncated = truncated or len(prepared) < len(frame)
+            prepared.to_sql(table, conn, index=False, if_exists="replace")
             written.append(table)
         conn.commit()
     except Exception as exc:  # writing failed — don't leave a half-built DB around
@@ -151,4 +157,6 @@ def ingest_upload(filename: str, data: bytes, dest_dir: str | Path) -> DataSourc
         raise IngestError(f"'{filename}' contains no rows to load.")
 
     logger.info("Ingested %s -> %s (tables: %s)", filename, db_path, written)
-    return DataSource(name=filename, db_path=db_path, tables=written)
+    return DataSource(
+        name=filename, db_path=db_path, tables=written, truncated=truncated
+    )

@@ -22,6 +22,7 @@ import streamlit as st
 # Allow `import app...` when Streamlit runs this file as a script.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from app import ingest  # noqa: E402
 from app.charts import choose_chart  # noqa: E402
 from app.config import ConfigError, settings  # noqa: E402
 from app.ingest import IngestError, ingest_upload  # noqa: E402
@@ -244,6 +245,13 @@ def _ingest_uploads(uploaded_files: list) -> None:
         st.session_state.sources[name] = source
         st.session_state.active_source = name
         st.toast(f"Loaded {name}: {', '.join(source.tables)}", icon="📄")
+        if source.truncated:
+            st.warning(
+                f"{name} is very large and was capped at "
+                f"{ingest.MAX_ROWS_PER_TABLE:,} rows per table — answers cover "
+                "only that many rows.",
+                icon="⚠️",
+            )
 
 
 def _select_source() -> None:
