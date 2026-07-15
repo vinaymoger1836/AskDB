@@ -9,8 +9,9 @@ from __future__ import annotations
 
 import logging
 import re
+from collections import OrderedDict
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from app.config import settings
@@ -44,6 +45,37 @@ class AgentResult:
     def ok(self) -> bool:
         """True when a query ran successfully."""
         return self.error is None and self.sql is not None
+
+
+# --- Result cache ---------------------------------------------------------
+# The database is read-only and immutable at runtime, so the same question (in
+# the same conversation context, against the same DB, with the same limit)
+# always yields the same answer. Caching successful results skips BOTH LLM calls
+# (SQL generation + summary) on repeats — cutting latency and Groq API usage —
+# with no staleness risk while the underlying data does not change.
+_CACHE_MAX = 128
+_cache: OrderedDict[tuple, AgentResult] = OrderedDict()
+
+
+def clear_cache() -> None:
+    """Empty the result cache (call after the underlying data changes)."""
+    _cache.clear()
+
+
+def _cache_key(
+    question: str,
+    db_path: str | Path | None,
+    history: list[dict[str, str]] | None,
+    limit: int,
+) -> tuple:
+    """Build a hashable cache key for a question in its conversation context."""
+    hist = tuple((h.get("question"), h.get("sql")) for h in (history or []))
+    return (question, str(db_path or settings.db_path), hist, limit)
+
+
+def _copy_result(result: AgentResult) -> AgentResult:
+    """Return a defensive copy so callers can't mutate cached state in place."""
+    return replace(result, columns=list(result.columns), rows=list(result.rows))
 
 
 def _strip_sql(text: str) -> str:
@@ -85,6 +117,7 @@ def answer(
     max_limit: int | None = None,
     history: list[dict[str, str]] | None = None,
     db_path: str | Path | None = None,
+    use_cache: bool = True,
 ) -> AgentResult:
     """Answer a natural-language question with a validated read-only SQL query.
 
@@ -94,16 +127,27 @@ def answer(
     execution both target it. Loops up to `max_retries + 1` times, feeding any
     validation/execution error back to the model. Returns an AgentResult; on
     total failure `error` is set (the caller shows a friendly message rather
-    than crashing).
+    than crashing). Successful answers are cached (see `use_cache`); pass
+    `use_cache=False` to force a fresh generation.
     """
     question = (question or "").strip()
     if not question:
         return AgentResult(question=question, error="Please enter a question.")
 
-    llm = llm or _default_llm()
-    schema = schema if schema is not None else get_schema(db_path)
     retries = settings.agent_max_retries if max_retries is None else max_retries
     limit = settings.max_limit if max_limit is None else max_limit
+
+    # Only cache the standard path: a caller-supplied schema may not correspond
+    # to `db_path`, so we skip the cache to avoid returning a mismatched answer.
+    cacheable = use_cache and schema is None
+    key = _cache_key(question, db_path, history, limit) if cacheable else None
+    if key is not None and key in _cache:
+        _cache.move_to_end(key)
+        logger.debug("Cache hit for question: %s", question)
+        return _copy_result(_cache[key])
+
+    llm = llm or _default_llm()
+    schema = schema if schema is not None else get_schema(db_path)
 
     result = AgentResult(question=question)
     prior_sql: str | None = None
@@ -139,6 +183,11 @@ def answer(
         result.rows = rows
         result.error = None
         result.summary = _summarise(llm, question, columns, rows)
+        if key is not None:
+            _cache[key] = _copy_result(result)
+            _cache.move_to_end(key)
+            while len(_cache) > _CACHE_MAX:
+                _cache.popitem(last=False)
         return result
 
     # Exhausted all attempts; result.error holds the last failure reason.

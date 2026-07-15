@@ -18,6 +18,12 @@ def _demo_db() -> None:
     ensure_database()
 
 
+@pytest.fixture(autouse=True)
+def _clear_cache() -> None:
+    """Start each test with an empty result cache so tests stay independent."""
+    agent.clear_cache()
+
+
 class FakeLLM:
     """A scripted LLM: returns queued SQL for SQL prompts, a fixed line for summaries."""
 
@@ -106,3 +112,43 @@ def test_history_is_threaded_into_the_prompt() -> None:
     sql_prompt = fake.calls[0][-1]["content"]
     assert "top products by revenue" in sql_prompt
     assert "Conversation so far" in sql_prompt
+
+
+def test_repeat_question_is_served_from_cache() -> None:
+    # The same question a second time must not call the LLM again — the cached
+    # result is returned instead (skipping both the SQL and summary calls).
+    fake = FakeLLM(["SELECT name FROM products"])
+    first = agent.answer("list product names", llm=fake, max_retries=0)
+    calls_after_first = len(fake.calls)
+
+    second = agent.answer("list product names", llm=fake, max_retries=0)
+
+    assert first.ok and second.ok
+    assert second.sql == first.sql
+    assert len(fake.calls) == calls_after_first  # no further LLM calls
+    # The cached copy is independent — mutating it must not corrupt the cache.
+    second.rows.clear()
+    third = agent.answer("list product names", llm=fake, max_retries=0)
+    assert third.rows == first.rows
+
+
+def test_use_cache_false_forces_fresh_generation() -> None:
+    fake = FakeLLM(["SELECT name FROM products", "SELECT name FROM products"])
+    agent.answer("all product names", llm=fake, max_retries=0)
+    agent.answer("all product names", llm=fake, max_retries=0, use_cache=False)
+
+    # Two SQL generations happened (the second bypassed the cache), so the
+    # scripted SQL queue was consumed twice.
+    assert fake._sql == []
+
+
+def test_failures_are_not_cached() -> None:
+    # A question that never succeeds must not poison the cache — a later valid
+    # answer to the same question should still run and succeed.
+    bad = FakeLLM(["DROP TABLE products"])
+    failed = agent.answer("give me everything", llm=bad, max_retries=0)
+    assert not failed.ok
+
+    good = FakeLLM(["SELECT name FROM products"])
+    recovered = agent.answer("give me everything", llm=good, max_retries=0)
+    assert recovered.ok
