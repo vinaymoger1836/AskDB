@@ -150,6 +150,39 @@ def _conversation_history(messages: list[dict]) -> list[dict]:
     return turns
 
 
+def _explain_query(sql: str) -> str:
+    """Explain a query via the FastAPI backend when reachable, else in-process."""
+    try:
+        resp = requests.post(
+            f"{settings.api_base}/explain", json={"sql": sql}, timeout=60
+        )
+        if resp.status_code < 500:
+            resp.raise_for_status()
+            return resp.json()["explanation"]
+        return resp.json().get("detail", resp.text)  # surface a server-side problem
+    except requests.RequestException:
+        pass  # API unreachable — fall back to answering in-process.
+
+    from app import agent
+
+    try:
+        return agent.explain_sql(sql)
+    except (ConfigError, RuntimeError) as exc:
+        return f"Couldn't explain the query: {exc}"
+
+
+def _render_explain(sql: str, key_prefix: str) -> None:
+    """Offer an on-demand plain-English explanation of the query, cached per turn."""
+    store = st.session_state.setdefault("explanations", {})
+    if st.button(
+        "💡 Explain this query", key=f"{key_prefix}_explain", use_container_width=True
+    ):
+        with st.spinner("Explaining…"):
+            store[key_prefix] = _explain_query(sql)
+    if key_prefix in store:
+        st.info(store[key_prefix])
+
+
 def _render_downloads(columns: list[str], rows: list, key_prefix: str) -> None:
     """Offer the current result set as a CSV or Excel download."""
     tuples = [tuple(r) for r in rows]
@@ -200,8 +233,11 @@ def _render_answer(
     if attempts and attempts > 1:
         st.caption(f"↻ Self-corrected after {attempts - 1} retry(s).")
 
+    sql = result.get("sql") or ""
     with st.expander("Show SQL"):
-        st.code(result.get("sql") or "", language="sql")
+        st.code(sql, language="sql")
+        if sql:
+            _render_explain(sql, key_prefix)
 
     if not rows:
         st.info("The query ran but returned no rows.")

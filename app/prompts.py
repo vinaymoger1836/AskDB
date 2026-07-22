@@ -86,6 +86,22 @@ def build_sql_prompt(
     ]
 
 
+def build_explain_prompt(sql: str) -> list[dict[str, str]]:
+    """Build the chat messages that ask the LLM to explain a SQL query in English."""
+    system = (
+        "You explain SQL queries to a non-technical business user in plain English. "
+        "Describe what the query returns and how — the tables it reads, any filters, "
+        "grouping, and sorting — in 2-4 short sentences or bullet points. Do not "
+        "restate the raw SQL, invent columns, or suggest changes; just explain what "
+        "this query does."
+    )
+    user = f"Explain what this SQL query does:\n\n{sql}"
+    return [
+        {"role": "system", "content": system},
+        {"role": "user", "content": user},
+    ]
+
+
 def build_summary_prompt(
     question: str, columns: list[str], rows: list[tuple], max_rows: int = 20
 ) -> list[dict[str, str]]:

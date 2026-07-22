@@ -17,7 +17,7 @@ from pathlib import Path
 from app.config import settings
 from app.db import QueryError, get_schema, run_query
 from app.guardrails import GuardrailError, validate_and_prepare
-from app.prompts import build_sql_prompt, build_summary_prompt
+from app.prompts import build_explain_prompt, build_sql_prompt, build_summary_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -193,6 +193,25 @@ def answer(
     # Exhausted all attempts; result.error holds the last failure reason.
     logger.warning("Gave up after %d attempts: %s", result.attempts, result.error)
     return result
+
+
+def explain_sql(sql: str, *, llm: LLM | None = None) -> str:
+    """Return a plain-English explanation of a SQL query.
+
+    Used by the UI's "Explain this query" action. The SQL passed here is one the
+    agent already generated and validated, so no guardrail re-check is needed —
+    this only asks the LLM to describe it. Raises RuntimeError if the model can't
+    be reached, so the caller can show a friendly message.
+    """
+    sql = (sql or "").strip()
+    if not sql:
+        return "There is no SQL to explain."
+    llm = llm or _default_llm()
+    try:
+        return llm(build_explain_prompt(sql)).strip()
+    except Exception as exc:  # external call — surface, don't crash the app
+        logger.error("Explain call failed: %s", exc)
+        raise RuntimeError(f"Could not explain the query: {exc}") from exc
 
 
 def _summarise(

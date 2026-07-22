@@ -50,6 +50,18 @@ class QueryRequest(BaseModel):
     history: list[HistoryTurn] = Field(default_factory=list)
 
 
+class ExplainRequest(BaseModel):
+    """A validated SQL query to explain in plain English."""
+
+    sql: str = Field(..., min_length=1, max_length=5000)
+
+
+class ExplainResponse(BaseModel):
+    """The plain-English explanation of a SQL query."""
+
+    explanation: str
+
+
 class QueryResponse(BaseModel):
     """The agent's answer: SQL, tabular result, summary, and diagnostics."""
 
@@ -100,3 +112,15 @@ def query(request: QueryRequest) -> QueryResponse:
         attempts=result.attempts,
         error=result.error,
     )
+
+
+@app.post("/explain", response_model=ExplainResponse)
+def explain(request: ExplainRequest) -> ExplainResponse:
+    """Return a plain-English explanation of a generated SQL query."""
+    try:
+        explanation = agent.explain_sql(request.sql)
+    except ConfigError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return ExplainResponse(explanation=explanation)
