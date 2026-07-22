@@ -142,6 +142,36 @@ def test_use_cache_false_forces_fresh_generation() -> None:
     assert fake._sql == []
 
 
+def test_explain_sql_returns_the_models_explanation() -> None:
+    calls: list[list[dict[str, str]]] = []
+
+    def fake_llm(messages: list[dict[str, str]]) -> str:
+        calls.append(messages)
+        return "It lists every product name, capped at 10 rows."
+
+    text = agent.explain_sql("SELECT name FROM products LIMIT 10", llm=fake_llm)
+
+    assert "product name" in text
+    # The query under explanation must reach the prompt.
+    assert "SELECT name FROM products" in calls[0][-1]["content"]
+
+
+def test_explain_sql_handles_empty_input() -> None:
+    # No LLM call should be made when there's nothing to explain.
+    def boom(_messages: list[dict[str, str]]) -> str:
+        raise AssertionError("LLM should not be called for empty SQL")
+
+    assert agent.explain_sql("   ", llm=boom) == "There is no SQL to explain."
+
+
+def test_explain_sql_wraps_llm_failure() -> None:
+    def failing(_messages: list[dict[str, str]]) -> str:
+        raise ConnectionError("groq down")
+
+    with pytest.raises(RuntimeError, match="Could not explain"):
+        agent.explain_sql("SELECT 1", llm=failing)
+
+
 def test_failures_are_not_cached() -> None:
     # A question that never succeeds must not poison the cache — a later valid
     # answer to the same question should still run and succeed.
