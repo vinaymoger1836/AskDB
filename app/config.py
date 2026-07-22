@@ -66,6 +66,7 @@ class Settings:
         default_factory=lambda: _get_int("AGENT_MAX_RETRIES", 2)
     )
     query_timeout_s: int = field(default_factory=lambda: _get_int("QUERY_TIMEOUT_S", 5))
+    max_upload_mb: int = field(default_factory=lambda: _get_int("MAX_UPLOAD_MB", 25))
 
     def require(self, *names: str) -> None:
         """Raise ConfigError if any named secret attribute is unset.
