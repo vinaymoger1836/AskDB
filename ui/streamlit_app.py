@@ -243,6 +243,11 @@ def _render_answer(
         st.info("The query ran but returned no rows.")
         return
 
+    # A single numeric answer reads best as a headline metric, not a 1-cell table.
+    kpi = single_value(columns, [tuple(r) for r in rows])
+    if kpi is not None:
+        st.metric(kpi[0], _format_metric(kpi[1]))
+
     st.dataframe(
         [dict(zip(columns, r, strict=False)) for r in rows],
         use_container_width=True,
@@ -253,9 +258,30 @@ def _render_answer(
     # Charts are opt-out: rendering Plotly can be slow, so skip the work entirely
     # (figure build + client render) when charts were off for this answer.
     if show_chart:
-        fig = choose_chart(columns, [tuple(r) for r in rows])
-        if fig is not None:
-            st.plotly_chart(fig, use_container_width=True)
+        _render_chart(columns, rows, key_prefix)
+
+
+def _format_metric(value: object) -> str:
+    """Format a scalar for st.metric: grouped digits, no trailing .0 on integers."""
+    try:
+        num = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return str(value)
+    return f"{int(num):,}" if num == int(num) else f"{num:,.2f}"
+
+
+def _render_chart(columns: list[str], rows: list, key_prefix: str) -> None:
+    """Render an auto-chart, with a type picker when more than one kind fits."""
+    tuples = [tuple(r) for r in rows]
+    kinds = available_charts(columns, tuples)
+    if not kinds:
+        return
+    kind = kinds[0]  # AUTO
+    if len(kinds) > 1:
+        kind = st.selectbox("Chart type", kinds, key=f"{key_prefix}_charttype")
+    fig = build_chart(columns, tuples, kind)
+    if fig is not None:
+        st.plotly_chart(fig, use_container_width=True, key=f"{key_prefix}_chart")
 
 
 def _active_db_path() -> str | None:

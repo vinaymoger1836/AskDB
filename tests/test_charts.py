@@ -2,7 +2,15 @@
 
 from __future__ import annotations
 
-from app.charts import choose_chart
+from app.charts import (
+    GROUPED_BAR,
+    LINE,
+    PIE,
+    available_charts,
+    build_chart,
+    choose_chart,
+    single_value,
+)
 
 
 def test_bar_for_category_and_number() -> None:
