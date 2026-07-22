@@ -23,7 +23,7 @@ import streamlit as st
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app import ingest  # noqa: E402
-from app.charts import choose_chart  # noqa: E402
+from app.charts import available_charts, build_chart, single_value  # noqa: E402
 from app.config import ConfigError, settings  # noqa: E402
 from app.export import to_csv_bytes, to_excel_bytes  # noqa: E402
 from app.ingest import IngestError, ingest_upload  # noqa: E402
