@@ -25,6 +25,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from app import ingest  # noqa: E402
 from app.charts import choose_chart  # noqa: E402
 from app.config import ConfigError, settings  # noqa: E402
+from app.export import to_csv_bytes, to_excel_bytes  # noqa: E402
 from app.ingest import IngestError, ingest_upload  # noqa: E402
 from app.logging_config import configure_logging  # noqa: E402
 from data.seed import ensure_database  # noqa: E402
@@ -149,11 +150,38 @@ def _conversation_history(messages: list[dict]) -> list[dict]:
     return turns
 
 
-def _render_answer(result: dict, show_chart: bool = True) -> None:
-    """Render an assistant answer: summary, SQL, table, and an auto-chart.
+def _render_downloads(columns: list[str], rows: list, key_prefix: str) -> None:
+    """Offer the current result set as a CSV or Excel download."""
+    tuples = [tuple(r) for r in rows]
+    col_csv, col_xlsx = st.columns(2)
+    with col_csv:
+        st.download_button(
+            "⬇️ CSV",
+            data=to_csv_bytes(columns, tuples),
+            file_name="askdb_results.csv",
+            mime="text/csv",
+            use_container_width=True,
+            key=f"{key_prefix}_csv",
+        )
+    with col_xlsx:
+        st.download_button(
+            "⬇️ Excel",
+            data=to_excel_bytes(columns, tuples),
+            file_name="askdb_results.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+            key=f"{key_prefix}_xlsx",
+        )
+
+
+def _render_answer(
+    result: dict, show_chart: bool = True, key_prefix: str = "live"
+) -> None:
+    """Render an assistant answer: summary, SQL, table, downloads, and a chart.
 
     `show_chart` is captured per answer when it's produced, so toggling charts
-    only affects future queries — it never re-renders past turns.
+    only affects future queries — it never re-renders past turns. `key_prefix`
+    keeps each turn's download-button keys unique when the thread is replayed.
     """
     if result.get("error"):
         st.error(result["error"])
@@ -183,6 +211,8 @@ def _render_answer(result: dict, show_chart: bool = True) -> None:
         [dict(zip(columns, r, strict=False)) for r in rows],
         use_container_width=True,
     )
+
+    _render_downloads(columns, rows, key_prefix)
 
     # Charts are opt-out: rendering Plotly can be slow, so skip the work entirely
     # (figure build + client render) when charts were off for this answer.
@@ -342,13 +372,17 @@ def main() -> None:
     on_demo = st.session_state.active_source == DEMO_SOURCE
 
     # Replay the conversation so far.
-    for message in st.session_state.messages:
+    for index, message in enumerate(st.session_state.messages):
         if message["role"] == "user":
             with st.chat_message("user", avatar=_USER_AVATAR):
                 st.markdown(message["content"])
         else:
             with st.chat_message("assistant", avatar=_ASSISTANT_AVATAR):
-                _render_answer(message["result"], message.get("show_chart", True))
+                _render_answer(
+                    message["result"],
+                    message.get("show_chart", True),
+                    key_prefix=f"msg{index}",
+                )
 
     # On an empty conversation, offer sample questions as clickable starters.
     # Samples only fit the demo schema; uploaded sources get a plain prompt.
