@@ -28,22 +28,39 @@ an auto-chart, and a one-line answer. Generated SQL is treated as **untrusted in
 5. On a SQL error, the error is fed back to the model and the query is retried (self-correction).
 6. You get the SQL, a table, an auto-chart, and a natural-language summary.
 
+## Features
+
+- **Chat UI with multi-turn context** — a ChatGPT/Claude-style thread; follow-ups like
+  *"now break that down by month"* resolve against the previous turn's question and SQL.
+- **Bring your own data** — upload a CSV or Excel file and query it under the same guardrails
+  as the demo database (each file becomes a source; Excel sheets become tables).
+- **Explain this query** — one click sends the validated SQL back to the LLM for a plain-English
+  description of what it does (transparency without exposing anything unsafe).
+- **Auto-charts** — a heuristic picks a bar, line, pie, or grouped bar from the result shape;
+  a single numeric answer renders as a headline metric. A **chart-type picker** overrides the pick.
+- **Download results** — export any result table as CSV or Excel.
+- **Result caching** — repeat questions (same context and data) are served from an LRU cache,
+  skipping both LLM calls.
+
 ## Architecture
 
 ```
-Streamlit UI (question, sample chips, table, chart, "Show SQL")
+Streamlit UI (chat thread, source picker, uploads, table, charts, downloads, "Explain")
       │  calls FastAPI /query when reachable, else runs the agent in-process
       ▼
 FastAPI  /query  ── app/agent.answer()
       │   1. get_schema()          → table/column DDL text
-      │   2. build prompt(schema, question)
+      │   2. build prompt(schema, question, history)
       │   3. LLM (Groq)            → candidate SQL
       │   4. guardrails.validate_and_prepare()  → SELECT-only, LIMIT   [safety]
       │   5. db.run_query()  on read-only SQLite → rows
       │        └─ on error → feed error back → retry (≤2)
       │   6. LLM → one-line summary
       ▼
-SQLite demo database  (data/sales.db — seeded e-commerce dataset)
+SQLite  (data/sales.db demo dataset, or a session-scoped DB built from an upload)
+
+FastAPI  /explain  → LLM plain-English description of an already-validated query
+FastAPI  /schema, /health  → DDL text and a liveness probe
 ```
 
 ## The safety layer (`app/guardrails.py`)
@@ -56,7 +73,8 @@ model's validated query runs.
 
 ## Tech stack
 
-Groq (Llama 3.3 70B) · `sqlglot` · SQLite · FastAPI + Pydantic · Streamlit · Plotly · pytest · ruff.
+Groq (Llama 3.3 70B) · `sqlglot` · SQLite · FastAPI + Pydantic · Streamlit · Plotly ·
+pandas / openpyxl (CSV & Excel ingest and export) · pytest · ruff.
 
 ## Run locally
 
@@ -85,7 +103,8 @@ never hardcoded. See `.env.example`. Required: `GROQ_API_KEY`. Optional tunables
 
 ## Deploy (Hugging Face Spaces)
 
-The Space is a **Docker** Space (`sdk: docker`, `app_port: 8501`): the `Dockerfile` installs
-the deps, bakes the seeded database into the image, and launches Streamlit
-(`streamlit run ui/streamlit_app.py`), which answers in-process — no separate API host is
-needed. Set `GROQ_API_KEY` in **Settings → Variables and secrets** as a secret — never commit it.
+The Space is a **Docker** Space (`sdk: docker`, `app_port: 7860`): the `Dockerfile` installs
+the deps, bakes the seeded database into the image, and launches Streamlit on port 7860
+(`streamlit run ui/streamlit_app.py --server.port=7860`), which answers in-process — no separate
+API host is needed. Set `GROQ_API_KEY` in **Settings → Variables and secrets** as a secret —
+never commit it.
