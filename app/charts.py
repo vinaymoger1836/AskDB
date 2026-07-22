@@ -45,6 +45,11 @@ def _numeric(series: pd.Series) -> pd.Series:
     return pd.to_numeric(series, errors="coerce")
 
 
+def _is_numeric_col(df: pd.DataFrame, col: str) -> bool:
+    """True if a column has at least one value that parses as a number."""
+    return not _numeric(df[col]).isna().all()
+
+
 def _looks_like_period(name: str, series: pd.Series) -> bool:
     """True if a column reads like a time axis (by name or parseable as dates)."""
     if _DATE_HINT_RE.search(name):
@@ -93,8 +98,13 @@ def available_charts(columns: list[str], rows: list[tuple]) -> list[str]:
 
     if len(columns) == 3:
         df = to_dataframe(columns, rows)
-        numeric_cols = [c for c in columns if not _numeric(df[c]).isna().all()]
-        if len(numeric_cols) == 1:
+        # Convention: the last column is the measure; the first two are
+        # dimensions. Require at least one non-numeric dimension so a purely
+        # numeric 3-column matrix (no natural categories) yields no chart.
+        *dims, value_col = columns
+        if _is_numeric_col(df, value_col) and any(
+            not _is_numeric_col(df, c) for c in dims
+        ):
             return [AUTO, GROUPED_BAR]
 
     return []
@@ -148,11 +158,11 @@ def _three_column_chart(
     if kind not in (AUTO, GROUPED_BAR):
         return None
     df = to_dataframe(columns, rows)
-    numeric_cols = [c for c in columns if not _numeric(df[c]).isna().all()]
-    if len(numeric_cols) != 1:
+    x_col, color_col, value_col = columns
+    if not _is_numeric_col(df, value_col) or (
+        _is_numeric_col(df, x_col) and _is_numeric_col(df, color_col)
+    ):
         return None
-    value_col = numeric_cols[0]
-    x_col, color_col = [c for c in columns if c != value_col]
     df[value_col] = _numeric(df[value_col])
 
     try:
