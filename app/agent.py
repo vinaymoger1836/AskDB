@@ -14,6 +14,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
+from app import audit
 from app.config import settings
 from app.db import QueryError, get_schema, run_query
 from app.guardrails import GuardrailError, validate_and_prepare
@@ -171,6 +172,10 @@ def answer(
             columns, rows = run_query(safe_sql, db_path)
         except (GuardrailError, QueryError) as exc:
             logger.info("Attempt %d rejected/failed: %s", attempt, exc)
+            # Guardrail blocks are security-relevant; log them for the audit view.
+            # A QueryError is just malformed SQL, not a safety event — skip it.
+            if isinstance(exc, GuardrailError):
+                audit.record("llm", str(exc), candidate)
             prior_sql = candidate
             prior_error = str(exc)
             result.sql = candidate
