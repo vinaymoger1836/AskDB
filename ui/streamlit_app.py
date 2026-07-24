@@ -258,6 +258,21 @@ def _render_sql_editor(sql: str, key_prefix: str) -> None:
         st.rerun()
 
 
+def _render_save(question: str, key_prefix: str) -> None:
+    """Offer to pin this question as a named saved query for one-click re-runs."""
+    with st.popover("⭐ Save question", use_container_width=True):
+        name = st.text_input(
+            "Name this saved query",
+            value=question[:60],
+            key=f"{key_prefix}_savename",
+        )
+        if st.button("Save", key=f"{key_prefix}_savebtn", use_container_width=True):
+            final = name.strip() or question
+            _save_query(final, question)
+            st.toast(f"Saved “{final}”", icon="⭐")
+            st.rerun()
+
+
 def _render_downloads(columns: list[str], rows: list, key_prefix: str) -> None:
     """Offer the current result set as a CSV or Excel download."""
     tuples = [tuple(r) for r in rows]
@@ -314,6 +329,12 @@ def _render_answer(
         if sql:
             _render_explain(sql, key_prefix)
             _render_sql_editor(sql, key_prefix)
+
+    # Let the user pin real NL questions as saved queries (not edited-SQL turns,
+    # whose "question" is a UI label rather than something worth re-asking).
+    question = result.get("question") or ""
+    if question and question != "(edited SQL)":
+        _render_save(question, key_prefix)
 
     if not rows:
         st.info("The query ran but returned no rows.")
@@ -387,6 +408,22 @@ def _record_question(question: str) -> None:
         history.remove(question)  # re-asking bumps it back to the top
     history.insert(0, question)
     del history[_MAX_HISTORY:]
+
+
+def _saved_map() -> dict[str, str]:
+    """Return the saved-query {name: question} map for the active source.
+
+    Saved queries are curated favourites: unlike recent questions they are
+    user-named, never auto-evicted, and survive clearing the chat.
+    """
+    return st.session_state.saved_queries.setdefault(
+        st.session_state.active_source, {}
+    )
+
+
+def _save_query(name: str, question: str) -> None:
+    """Pin a question under a chosen name for the active source."""
+    _saved_map()[name] = question
 
 
 def _handle_question(question: str) -> None:
@@ -474,6 +511,26 @@ def _select_source() -> None:
         st.rerun()
 
 
+def _render_saved() -> None:
+    """List saved queries for the active source; re-run or delete each one."""
+    saved = _saved_map()
+    if not saved:
+        return
+    st.subheader("⭐ Saved queries")
+    for index, (name, question) in enumerate(list(saved.items())):
+        col_run, col_del = st.columns([5, 1])
+        with col_run:
+            if st.button(
+                name, key=f"saved_{index}", use_container_width=True, help=question
+            ):
+                st.session_state.rerun_question = question
+                st.rerun()
+        with col_del:
+            if st.button("🗑", key=f"saveddel_{index}", help=f"Remove “{name}”"):
+                del saved[name]
+                st.rerun()
+
+
 def _render_history() -> None:
     """List recent questions for the active source; click one to re-run it."""
     history = _history_list()
@@ -520,6 +577,7 @@ def _sidebar() -> None:
             st.session_state.messages = []
             st.rerun()
 
+        _render_saved()
         _render_history()
 
         with st.expander("Schema"):
@@ -564,6 +622,9 @@ def main() -> None:
     # Recent questions per source, for one-click re-runs from the sidebar.
     if "query_history" not in st.session_state:
         st.session_state.query_history = {}
+    # User-curated saved queries per source (survive clearing the chat).
+    if "saved_queries" not in st.session_state:
+        st.session_state.saved_queries = {}
 
     _sidebar()
 
