@@ -13,7 +13,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
-from app import agent
+from app import agent, audit
 from app.config import ConfigError, settings
 from app.db import DatabaseError, get_schema
 from app.ingest import IngestError
@@ -106,6 +106,21 @@ class ExplainResponse(BaseModel):
     """The plain-English explanation of a SQL query."""
 
     explanation: str
+
+
+class AuditEventModel(BaseModel):
+    """A single guardrail-block event, as served by /audit."""
+
+    timestamp: float
+    source: str
+    reason: str
+    sql: str
+
+
+class AuditResponse(BaseModel):
+    """Recent guardrail-block events, newest first."""
+
+    events: list[AuditEventModel] = []
 
 
 class QueryResponse(BaseModel):
@@ -204,6 +219,13 @@ def run_sql(request: RunSqlRequest) -> QueryResponse:
         attempts=result.attempts,
         error=result.error,
     )
+
+
+@app.get("/audit", response_model=AuditResponse)
+def audit_log(limit: int = 50) -> AuditResponse:
+    """Return recent guardrail-block events (which queries were refused, and why)."""
+    events = [AuditEventModel(**e.to_dict()) for e in audit.recent(limit)]
+    return AuditResponse(events=events)
 
 
 @app.post("/explain", response_model=ExplainResponse)

@@ -226,6 +226,8 @@ def run_sql(
         columns, rows = run_query(safe_sql, db_path)
     except (GuardrailError, QueryError) as exc:
         logger.info("Edited SQL rejected/failed: %s", exc)
+        if isinstance(exc, GuardrailError):
+            audit.record("edited", str(exc), text)
         result.sql = text
         result.error = str(exc)
         return result

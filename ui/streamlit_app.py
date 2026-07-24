@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 import requests
@@ -509,6 +510,56 @@ def _select_source() -> None:
         st.session_state.active_source = choice
         st.session_state.messages = []
         st.rerun()
+
+
+def _audit_events(limit: int = 25) -> list[dict]:
+    """Recent guardrail-block events, merged from the API and in-process logs.
+
+    Blocks can occur in either process depending on transport (the API answers
+    the demo DB; uploads and the HF Spaces single-service run in-process), so we
+    union both sources and de-duplicate to give one coherent view everywhere.
+    """
+    from app import audit
+
+    events = [e.to_dict() for e in audit.recent(limit)]
+    try:
+        resp = requests.get(
+            f"{settings.api_base}/audit", params={"limit": limit}, timeout=5
+        )
+        if resp.status_code < 500:
+            resp.raise_for_status()
+            events += resp.json().get("events", [])
+    except requests.RequestException:
+        pass  # API unreachable — local events only.
+
+    seen: set = set()
+    merged: list[dict] = []
+    for event in sorted(events, key=lambda e: e["timestamp"], reverse=True):
+        key = (event["timestamp"], event["sql"], event["reason"])
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(event)
+    return merged[:limit]
+
+
+def _render_audit() -> None:
+    """Show recent guardrail blocks — live proof the safety layer is working."""
+    events = _audit_events()
+    with st.expander(f"🛡️ Guardrail log ({len(events)})"):
+        st.caption(
+            "Queries the guardrail refused to run — the LLM's SQL (and yours) is "
+            "treated as untrusted input."
+        )
+        if not events:
+            st.caption("Nothing blocked yet. Try editing a query into a write.")
+            return
+        for event in events:
+            when = time.strftime("%H:%M:%S", time.localtime(event["timestamp"]))
+            origin = "model" if event["source"] == "llm" else "your edit"
+            st.markdown(f"**{when}** · blocked · _{origin}_")
+            st.caption(event["reason"])
+            st.code(event["sql"], language="sql")
 
 
 def _render_saved() -> None:
