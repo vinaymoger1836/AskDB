@@ -195,6 +195,42 @@ def answer(
     return result
 
 
+def run_sql(
+    sql: str,
+    *,
+    db_path: str | Path | None = None,
+    max_limit: int | None = None,
+) -> AgentResult:
+    """Validate and execute user-supplied SQL through the guardrail (no LLM).
+
+    Powers the UI's "edit & run" action: human-written SQL is treated exactly
+    like the model's output — it must clear `validate_and_prepare` (SELECT-only,
+    LIMIT-clamped) and runs on a read-only connection. No LLM is involved, so this
+    works without a Groq key and returns no summary. On rejection or execution
+    failure, `error` is set and `sql` holds what the user submitted.
+    """
+    text = (sql or "").strip()
+    result = AgentResult(question="(edited SQL)", attempts=1)
+    if not text:
+        result.error = "Please enter a SQL query."
+        return result
+
+    limit = settings.max_limit if max_limit is None else max_limit
+    try:
+        safe_sql = validate_and_prepare(text, max_limit=limit)
+        columns, rows = run_query(safe_sql, db_path)
+    except (GuardrailError, QueryError) as exc:
+        logger.info("Edited SQL rejected/failed: %s", exc)
+        result.sql = text
+        result.error = str(exc)
+        return result
+
+    result.sql = safe_sql
+    result.columns = columns
+    result.rows = rows
+    return result
+
+
 def explain_sql(sql: str, *, llm: LLM | None = None) -> str:
     """Return a plain-English explanation of a SQL query.
 

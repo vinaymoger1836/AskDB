@@ -86,6 +86,16 @@ class UploadResponse(BaseModel):
     truncated: bool
 
 
+class RunSqlRequest(BaseModel):
+    """User-edited SQL to run directly, with an optional uploaded source."""
+
+    sql: str = Field(..., min_length=1, max_length=5000)
+    source_id: str | None = Field(
+        default=None,
+        description="ID from /upload to run against an uploaded file; omit for demo DB.",
+    )
+
+
 class ExplainRequest(BaseModel):
     """A validated SQL query to explain in plain English."""
 
