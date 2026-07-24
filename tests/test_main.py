@@ -81,6 +81,19 @@ def test_run_sql_with_unknown_source_id_is_404() -> None:
     assert resp.status_code == 404
 
 
+def test_audit_endpoint_records_a_blocked_query() -> None:
+    from app import audit
+
+    audit.clear()
+    client.post("/run-sql", json={"sql": "DROP TABLE products"})
+
+    resp = client.get("/audit")
+    assert resp.status_code == 200
+    events = resp.json()["events"]
+    assert events and events[0]["source"] == "edited"
+    assert "DROP" in events[0]["sql"].upper()
+
+
 def test_query_resolves_uploaded_source_to_its_db_path(monkeypatch) -> None:
     source_id = _upload("sales.csv", b"item,qty\nx,1\n").json()["source_id"]
 

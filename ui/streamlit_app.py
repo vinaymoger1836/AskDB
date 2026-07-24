@@ -637,6 +637,8 @@ def _sidebar() -> None:
             except Exception as exc:  # a bad source shouldn't break the sidebar
                 st.warning(f"Couldn't read schema: {exc}")
 
+        _render_audit()
+
         st.subheader("About")
         st.write(
             "AskDB turns natural language into safe SQL. Generated SQL is treated "

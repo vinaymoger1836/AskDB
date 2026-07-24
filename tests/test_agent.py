@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from app import agent
+from app import agent, audit
 from data.seed import ensure_database
 
 
@@ -19,9 +19,10 @@ def _demo_db() -> None:
 
 
 @pytest.fixture(autouse=True)
-def _clear_cache() -> None:
-    """Start each test with an empty result cache so tests stay independent."""
+def _clear_state() -> None:
+    """Start each test with an empty result cache and audit log (independence)."""
     agent.clear_cache()
+    audit.clear()
 
 
 class FakeLLM:
@@ -168,6 +169,31 @@ def test_run_sql_rejects_empty_input() -> None:
     result = agent.run_sql("   ")
     assert not result.ok
     assert result.error is not None
+
+
+def test_guardrail_block_is_audited() -> None:
+    # A model-generated write is blocked, retried, and recorded in the audit log.
+    fake = FakeLLM(["DROP TABLE products", "SELECT name FROM products"])
+    result = agent.answer("show product names", llm=fake, max_retries=2)
+    assert result.ok  # recovered on the retry
+
+    events = audit.recent()
+    assert events and events[0].source == "llm"
+    assert "DROP" in events[0].sql.upper()
+
+
+def test_edited_sql_block_is_audited() -> None:
+    agent.run_sql("DELETE FROM products")
+    events = audit.recent()
+    assert events and events[0].source == "edited"
+    assert "DELETE" in events[0].sql.upper()
+
+
+def test_execution_error_is_not_audited() -> None:
+    # A bad column is a QueryError, not a guardrail block — it must NOT be logged.
+    result = agent.run_sql("SELECT nonexistent_column FROM products")
+    assert not result.ok
+    assert audit.recent() == []
 
 
 def test_explain_sql_returns_the_models_explanation() -> None:
