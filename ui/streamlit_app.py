@@ -189,7 +189,13 @@ def _conversation_history(messages: list[dict]) -> list[dict]:
             pending_question = message["content"]
         elif message["role"] == "assistant" and pending_question is not None:
             result = message.get("result", {})
-            if not result.get("error") and result.get("sql"):
+            # Skip edited-SQL turns: their "question" is a UI label, not a real
+            # NL question, so it would only confuse follow-up context.
+            if (
+                not message.get("edited")
+                and not result.get("error")
+                and result.get("sql")
+            ):
                 turns.append({"question": pending_question, "sql": result["sql"]})
             pending_question = None
     return turns
@@ -380,6 +386,23 @@ def _handle_question(question: str) -> None:
     )
 
 
+def _handle_edited_sql(sql: str) -> None:
+    """Run user-edited SQL through the guardrail and append it as a chat turn."""
+    db_path = _active_db_path()
+    show_chart = st.session_state.get("show_charts", True)
+    label = "✏️ Ran edited SQL"
+    st.session_state.messages.append({"role": "user", "content": label})
+    with st.chat_message("user", avatar=_USER_AVATAR):
+        st.markdown(label)
+    with st.chat_message("assistant", avatar=_ASSISTANT_AVATAR):
+        with st.spinner("Validating and running SQL…"):
+            result = run_sql(sql, db_path)
+        _render_answer(result, show_chart)
+    st.session_state.messages.append(
+        {"role": "assistant", "result": result, "show_chart": show_chart, "edited": True}
+    )
+
+
 def _ingest_uploads(uploaded_files: list) -> None:
     """Load any newly uploaded CSV/Excel files into session-scoped sources."""
     for upload in uploaded_files:
@@ -537,6 +560,13 @@ def main() -> None:
     typed = st.chat_input(placeholder)
     if typed and typed.strip():
         pending = typed.strip()
+
+    # A "Run edited SQL" click on any past turn is handled before a typed
+    # question, running the user's SQL through the same guardrail.
+    pending_sql = st.session_state.pop("pending_sql", None)
+    if pending_sql is not None:
+        _handle_edited_sql(pending_sql)
+        st.rerun()
 
     if pending:
         _handle_question(pending)

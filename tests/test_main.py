@@ -59,6 +59,28 @@ def test_schema_with_unknown_source_id_is_404() -> None:
     assert client.get("/schema", params={"source_id": "nope"}).status_code == 404
 
 
+def test_run_sql_executes_edited_query() -> None:
+    resp = client.post("/run-sql", json={"sql": "SELECT name FROM products"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["error"] is None
+    assert "name" in body["columns"]
+    assert body["rows"]
+
+
+def test_run_sql_rejects_a_write_via_guardrail() -> None:
+    # The guardrail runs server-side, so a write is a clean 200 with an error
+    # message — not a crash — matching how the UI renders it.
+    resp = client.post("/run-sql", json={"sql": "DROP TABLE products"})
+    assert resp.status_code == 200
+    assert resp.json()["error"] is not None
+
+
+def test_run_sql_with_unknown_source_id_is_404() -> None:
+    resp = client.post("/run-sql", json={"sql": "SELECT 1", "source_id": "nope"})
+    assert resp.status_code == 404
+
+
 def test_query_resolves_uploaded_source_to_its_db_path(monkeypatch) -> None:
     source_id = _upload("sales.csv", b"item,qty\nx,1\n").json()["source_id"]
 

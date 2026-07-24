@@ -142,6 +142,34 @@ def test_use_cache_false_forces_fresh_generation() -> None:
     assert fake._sql == []
 
 
+def test_run_sql_executes_valid_select() -> None:
+    # No LLM is involved: user-supplied SQL runs straight through the guardrail.
+    result = agent.run_sql("SELECT name FROM products")
+    assert result.ok
+    assert "name" in result.columns
+    assert len(result.rows) > 0
+    assert "LIMIT" in (result.sql or "").upper()  # guardrail injected a limit
+
+
+def test_run_sql_rejects_a_write() -> None:
+    result = agent.run_sql("DROP TABLE products")
+    assert not result.ok
+    assert result.error is not None
+    assert result.sql == "DROP TABLE products"  # echoes what the user submitted
+
+
+def test_run_sql_reports_execution_errors() -> None:
+    result = agent.run_sql("SELECT nonexistent_column FROM products")
+    assert not result.ok
+    assert result.error is not None
+
+
+def test_run_sql_rejects_empty_input() -> None:
+    result = agent.run_sql("   ")
+    assert not result.ok
+    assert result.error is not None
+
+
 def test_explain_sql_returns_the_models_explanation() -> None:
     calls: list[list[dict[str, str]]] = []
 
