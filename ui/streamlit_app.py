@@ -49,6 +49,9 @@ SAMPLE_QUESTIONS = [
 _USER_AVATAR = "🧑‍💻"
 _ASSISTANT_AVATAR = "🧮"
 
+# How many recent questions to keep per source in the sidebar re-run list.
+_MAX_HISTORY = 15
+
 # ChatGPT/Claude-style bubbles: constrain width, round corners, tint by role.
 _CHAT_CSS = """
 <style>
@@ -366,8 +369,29 @@ def _active_db_path() -> str | None:
     return str(source.db_path) if source else None
 
 
+def _history_list() -> list[str]:
+    """Return the recent-questions list for the active source (created on demand).
+
+    History is scoped per source: switching sources clears the chat, so a demo
+    question shouldn't reappear as a re-run option while an upload is active.
+    """
+    return st.session_state.query_history.setdefault(
+        st.session_state.active_source, []
+    )
+
+
+def _record_question(question: str) -> None:
+    """Add a question to the top of the recent list (deduped, capped)."""
+    history = _history_list()
+    if question in history:
+        history.remove(question)  # re-asking bumps it back to the top
+    history.insert(0, question)
+    del history[_MAX_HISTORY:]
+
+
 def _handle_question(question: str) -> None:
     """Append the user turn, run the query, and append the assistant turn."""
+    _record_question(question)
     # Capture prior turns for follow-up context before adding the current one.
     history = _conversation_history(st.session_state.messages)
     db_path = _active_db_path()
@@ -450,6 +474,23 @@ def _select_source() -> None:
         st.rerun()
 
 
+def _render_history() -> None:
+    """List recent questions for the active source; click one to re-run it."""
+    history = _history_list()
+    if not history:
+        return
+    st.subheader("Recent questions")
+    for index, question in enumerate(history):
+        if st.button(
+            question,
+            key=f"hist_{index}",
+            use_container_width=True,
+            help="Re-run this question",
+        ):
+            st.session_state.rerun_question = question
+            st.rerun()
+
+
 def _sidebar() -> None:
     """Render the sidebar: data sources, upload, schema, and clear-chat."""
     from app.db import get_schema
@@ -478,6 +519,8 @@ def _sidebar() -> None:
         if st.button("🗑️ Clear chat", use_container_width=True):
             st.session_state.messages = []
             st.rerun()
+
+        _render_history()
 
         with st.expander("Schema"):
             try:
@@ -518,6 +561,9 @@ def main() -> None:
         st.session_state.active_source = DEMO_SOURCE
     if "show_charts" not in st.session_state:
         st.session_state.show_charts = True
+    # Recent questions per source, for one-click re-runs from the sidebar.
+    if "query_history" not in st.session_state:
+        st.session_state.query_history = {}
 
     _sidebar()
 
@@ -560,6 +606,11 @@ def main() -> None:
     typed = st.chat_input(placeholder)
     if typed and typed.strip():
         pending = typed.strip()
+
+    # A "Recent questions" click in the sidebar re-runs that question as if typed.
+    rerun_question = st.session_state.pop("rerun_question", None)
+    if rerun_question:
+        pending = rerun_question
 
     # A "Run edited SQL" click on any past turn is handled before a typed
     # question, running the user's SQL through the same guardrail.
