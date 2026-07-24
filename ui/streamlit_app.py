@@ -135,6 +135,51 @@ def run_query(
     return _query_in_process(question, history, db_path)
 
 
+def _run_sql_via_api(sql: str) -> dict | None:
+    """Try the FastAPI /run-sql backend. Return the response, or None if unreachable."""
+    try:
+        resp = requests.post(
+            f"{settings.api_base}/run-sql", json={"sql": sql}, timeout=60
+        )
+    except requests.RequestException:
+        return None
+    if resp.status_code >= 500:
+        detail = resp.json().get("detail", resp.text)
+        return {"error": detail, "question": "(edited SQL)"}
+    resp.raise_for_status()
+    return resp.json()
+
+
+def _run_sql_in_process(sql: str, db_path: str | None) -> dict:
+    """Run edited SQL by calling the agent directly (HF Spaces / uploaded sources)."""
+    from app import agent  # local import so the API path doesn't load it needlessly
+
+    result = agent.run_sql(sql, db_path=db_path)
+    return {
+        "question": result.question,
+        "sql": result.sql,
+        "columns": result.columns,
+        "rows": [list(r) for r in result.rows],
+        "summary": result.summary,
+        "attempts": result.attempts,
+        "error": result.error,
+    }
+
+
+def run_sql(sql: str, db_path: str | None = None) -> dict:
+    """Run user-edited SQL through the same guardrail as generated SQL.
+
+    Mirrors `run_query`'s transport choice: the demo DB tries the FastAPI backend
+    first and falls back to in-process; uploaded sources always run in-process.
+    """
+    if db_path is None:
+        result = _run_sql_via_api(sql)
+        if result is not None:
+            return result
+        logger.info("API unreachable at %s; running SQL in-process.", settings.api_base)
+    return _run_sql_in_process(sql, db_path)
+
+
 def _conversation_history(messages: list[dict]) -> list[dict]:
     """Extract prior successful {question, sql} turns for follow-up context."""
     turns: list[dict] = []
@@ -181,6 +226,27 @@ def _render_explain(sql: str, key_prefix: str) -> None:
             store[key_prefix] = _explain_query(sql)
     if key_prefix in store:
         st.info(store[key_prefix])
+
+
+def _render_sql_editor(sql: str, key_prefix: str) -> None:
+    """Let the user edit the generated SQL and re-run it through the guardrail.
+
+    The edited query is untrusted just like the model's: it passes the same
+    `validate_and_prepare` check (SELECT-only, LIMIT-clamped) before executing.
+    """
+    if not st.toggle("✏️ Edit & run SQL", key=f"{key_prefix}_editmode"):
+        return
+    edited = st.text_area(
+        "Edit the SQL, then run it — the same guardrail applies.",
+        value=sql,
+        key=f"{key_prefix}_sqltext",
+        height=140,
+    )
+    if st.button(
+        "▶ Run edited SQL", key=f"{key_prefix}_runsql", use_container_width=True
+    ):
+        st.session_state.pending_sql = edited
+        st.rerun()
 
 
 def _render_downloads(columns: list[str], rows: list, key_prefix: str) -> None:
@@ -238,6 +304,7 @@ def _render_answer(
         st.code(sql, language="sql")
         if sql:
             _render_explain(sql, key_prefix)
+            _render_sql_editor(sql, key_prefix)
 
     if not rows:
         st.info("The query ran but returned no rows.")
