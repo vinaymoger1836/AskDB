@@ -186,6 +186,26 @@ def query(request: QueryRequest) -> QueryResponse:
     )
 
 
+@app.post("/run-sql", response_model=QueryResponse)
+def run_sql(request: RunSqlRequest) -> QueryResponse:
+    """Run user-edited SQL through the guardrail and execute it read-only (no LLM)."""
+    db_path = _resolve_source(request.source_id)
+    try:
+        result = agent.run_sql(request.sql, db_path=db_path)
+    except DatabaseError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    return QueryResponse(
+        question=result.question,
+        sql=result.sql,
+        columns=result.columns,
+        rows=[list(r) for r in result.rows],
+        summary=result.summary,
+        attempts=result.attempts,
+        error=result.error,
+    )
+
+
 @app.post("/explain", response_model=ExplainResponse)
 def explain(request: ExplainRequest) -> ExplainResponse:
     """Return a plain-English explanation of a generated SQL query."""
