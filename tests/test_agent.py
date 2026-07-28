@@ -63,7 +63,6 @@ def test_retry_after_rejected_write() -> None:
     second_prompt = fake.calls[1][-1]["content"]
     assert "Error:" in second_prompt
 
-
 def test_retry_after_sql_execution_error() -> None:
     # First reply references a non-existent column (QueryError), second is valid.
     fake = FakeLLM(
