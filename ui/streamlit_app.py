@@ -127,6 +127,7 @@ def _query_in_process(
         "summary": result.summary,
         "attempts": result.attempts,
         "error": result.error,
+        "cached": result.cached,
     }
 
 
@@ -176,6 +177,7 @@ def _run_sql_in_process(sql: str, db_path: str | None) -> dict:
         "summary": result.summary,
         "attempts": result.attempts,
         "error": result.error,
+        "cached": result.cached,
     }
 
 
@@ -332,6 +334,8 @@ def _render_answer(
     attempts = result.get("attempts", 1)
     if attempts and attempts > 1:
         st.caption(f"↻ Self-corrected after {attempts - 1} retry(s).")
+    if result.get("cached"):
+        st.caption("⚡ Served from cache.")
 
     sql = result.get("sql") or ""
     with st.expander("Show SQL"):

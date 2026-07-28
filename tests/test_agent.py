@@ -133,6 +133,42 @@ def test_repeat_question_is_served_from_cache() -> None:
     assert third.rows == first.rows
 
 
+def test_cache_hit_sets_the_cached_flag() -> None:
+    fake = FakeLLM(["SELECT name FROM products"])
+    first = agent.answer("names of products", llm=fake, max_retries=0)
+    second = agent.answer("names of products", llm=fake, max_retries=0)
+
+    assert first.cached is False  # freshly generated
+    assert second.cached is True  # served from the question cache
+
+
+def test_run_sql_is_cached_on_repeat() -> None:
+    first = agent.run_sql("SELECT name FROM products")
+    second = agent.run_sql("SELECT name FROM products")
+
+    assert first.ok and second.ok
+    assert first.cached is False
+    assert second.cached is True  # the SQL-level cache served the re-run
+    assert second.rows == first.rows
+
+
+def test_run_sql_reuses_a_query_the_agent_already_ran() -> None:
+    # The question path and the edited-SQL path share one SQL cache: re-running a
+    # query the agent generated earlier is a cache hit even via run_sql.
+    fake = FakeLLM(["SELECT name FROM products"])
+    answered = agent.answer("give product names", llm=fake, max_retries=0)
+
+    reran = agent.run_sql(answered.sql or "")
+    assert reran.cached is True
+    assert reran.rows == answered.rows
+
+
+def test_clear_cache_empties_the_sql_cache() -> None:
+    agent.run_sql("SELECT name FROM products")
+    agent.clear_cache()
+    assert agent.run_sql("SELECT name FROM products").cached is False
+
+
 def test_use_cache_false_forces_fresh_generation() -> None:
     fake = FakeLLM(["SELECT name FROM products", "SELECT name FROM products"])
     agent.answer("all product names", llm=fake, max_retries=0)

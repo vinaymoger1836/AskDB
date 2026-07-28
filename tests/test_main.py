@@ -94,6 +94,15 @@ def test_audit_endpoint_records_a_blocked_query() -> None:
     assert "DROP" in events[0]["sql"].upper()
 
 
+def test_run_sql_second_call_is_served_from_cache() -> None:
+    from app import agent
+
+    agent.clear_cache()
+    body = {"sql": "SELECT name FROM products"}
+    assert client.post("/run-sql", json=body).json()["cached"] is False
+    assert client.post("/run-sql", json=body).json()["cached"] is True
+
+
 def test_saved_query_save_list_delete_flow() -> None:
     save = client.post(
         "/saved-queries",

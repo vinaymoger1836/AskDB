@@ -157,6 +157,7 @@ class QueryResponse(BaseModel):
     summary: str | None = None
     attempts: int = 0
     error: str | None = None
+    cached: bool = False
 
 
 @app.get("/health")
@@ -222,6 +223,7 @@ def query(request: QueryRequest) -> QueryResponse:
         summary=result.summary,
         attempts=result.attempts,
         error=result.error,
+        cached=result.cached,
     )
 
 
@@ -242,6 +244,7 @@ def run_sql(request: RunSqlRequest) -> QueryResponse:
         summary=result.summary,
         attempts=result.attempts,
         error=result.error,
+        cached=result.cached,
     )
 
 

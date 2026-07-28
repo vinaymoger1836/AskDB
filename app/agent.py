@@ -41,6 +41,7 @@ class AgentResult:
     summary: str | None = None
     attempts: int = 0
     error: str | None = None
+    cached: bool = False  # True when this answer was served from a cache
 
     @property
     def ok(self) -> bool:
@@ -57,10 +58,42 @@ class AgentResult:
 _CACHE_MAX = 128
 _cache: OrderedDict[tuple, AgentResult] = OrderedDict()
 
+# A second, finer-grained cache keyed by the *validated* SQL (not the question).
+# It is shared by the question path and the edited-SQL path, so re-running the
+# exact SQL — via the "edit & run" button, a saved query, or a differently-worded
+# question that compiles to the same query — skips the DB round-trip. Safe for the
+# same reason as the question cache: the queried database is read-only at runtime.
+_SQL_CACHE_MAX = 128
+_sql_cache: OrderedDict[tuple, tuple[list[str], list[tuple]]] = OrderedDict()
+
 
 def clear_cache() -> None:
-    """Empty the result cache (call after the underlying data changes)."""
+    """Empty both result caches (call after the underlying data changes)."""
     _cache.clear()
+    _sql_cache.clear()
+
+
+def _run_query_cached(
+    safe_sql: str, db_path: str | Path | None, *, use_cache: bool = True
+) -> tuple[list[str], list[tuple], bool]:
+    """Execute validated SQL, caching (columns, rows) by (db_path, SQL).
+
+    Returns (columns, rows, from_cache). Fresh copies are returned on every call
+    so a caller mutating its rows can never corrupt the cached entry.
+    """
+    key = (str(db_path or settings.db_path), safe_sql)
+    if use_cache and key in _sql_cache:
+        _sql_cache.move_to_end(key)
+        columns, rows = _sql_cache[key]
+        return list(columns), list(rows), True
+
+    columns, rows = run_query(safe_sql, db_path)
+    if use_cache:
+        _sql_cache[key] = (list(columns), list(rows))
+        _sql_cache.move_to_end(key)
+        while len(_sql_cache) > _SQL_CACHE_MAX:
+            _sql_cache.popitem(last=False)
+    return columns, rows, False
 
 
 def _cache_key(
@@ -145,7 +178,9 @@ def answer(
     if key is not None and key in _cache:
         _cache.move_to_end(key)
         logger.debug("Cache hit for question: %s", question)
-        return _copy_result(_cache[key])
+        hit = _copy_result(_cache[key])
+        hit.cached = True
+        return hit
 
     llm = llm or _default_llm()
     schema = schema if schema is not None else get_schema(db_path)
@@ -169,7 +204,7 @@ def answer(
         candidate = _strip_sql(raw)
         try:
             safe_sql = validate_and_prepare(candidate, max_limit=limit)
-            columns, rows = run_query(safe_sql, db_path)
+            columns, rows, _ = _run_query_cached(safe_sql, db_path, use_cache=cacheable)
         except (GuardrailError, QueryError) as exc:
             logger.info("Attempt %d rejected/failed: %s", attempt, exc)
             # Guardrail blocks are security-relevant; log them for the audit view.
@@ -223,7 +258,7 @@ def run_sql(
     limit = settings.max_limit if max_limit is None else max_limit
     try:
         safe_sql = validate_and_prepare(text, max_limit=limit)
-        columns, rows = run_query(safe_sql, db_path)
+        columns, rows, from_cache = _run_query_cached(safe_sql, db_path)
     except (GuardrailError, QueryError) as exc:
         logger.info("Edited SQL rejected/failed: %s", exc)
         if isinstance(exc, GuardrailError):
@@ -235,6 +270,7 @@ def run_sql(
     result.sql = safe_sql
     result.columns = columns
     result.rows = rows
+    result.cached = from_cache
     return result
 
 
