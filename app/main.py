@@ -158,6 +158,8 @@ class QueryResponse(BaseModel):
     attempts: int = 0
     error: str | None = None
     cached: bool = False
+    # Concrete rephrasings offered when the question was too ambiguous to answer.
+    clarification: list[str] | None = None
 
 
 @app.get("/health")
@@ -224,6 +226,7 @@ def query(request: QueryRequest) -> QueryResponse:
         attempts=result.attempts,
         error=result.error,
         cached=result.cached,
+        clarification=result.clarification,
     )
 
 

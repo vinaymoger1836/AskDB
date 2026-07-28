@@ -22,6 +22,13 @@ def test_sql_prompt_warns_against_bare_columns_with_aggregates() -> None:
     assert "having" in system
 
 
+def test_clarify_instruction_is_opt_in() -> None:
+    without = build_sql_prompt("schema", "q")[0]["content"]
+    with_clarify = build_sql_prompt("schema", "q", allow_clarify=True)[0]["content"]
+    assert "CLARIFY:" not in without  # off by default
+    assert "CLARIFY:" in with_clarify  # added only when requested
+
+
 def test_explain_prompt_carries_the_sql_and_asks_for_plain_english() -> None:
     sql = "SELECT name FROM products LIMIT 10"
     messages = build_explain_prompt(sql)

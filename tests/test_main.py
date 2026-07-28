@@ -135,6 +135,20 @@ def test_delete_unknown_saved_query_is_404() -> None:
     assert resp.status_code == 404
 
 
+def test_query_returns_clarification_options(monkeypatch) -> None:
+    def fake_answer(question, *, history=None, db_path=None):
+        return AgentResult(
+            question=question, clarification=["Interpretation A", "Interpretation B"]
+        )
+
+    monkeypatch.setattr("app.main.agent.answer", fake_answer)
+
+    body = client.post("/query", json={"question": "vague thing"}).json()
+    assert body["clarification"] == ["Interpretation A", "Interpretation B"]
+    assert body["sql"] is None
+    assert body["error"] is None
+
+
 def test_query_resolves_uploaded_source_to_its_db_path(monkeypatch) -> None:
     source_id = _upload("sales.csv", b"item,qty\nx,1\n").json()["source_id"]
 

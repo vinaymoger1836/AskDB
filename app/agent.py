@@ -188,6 +188,7 @@ def answer(
     history: list[dict[str, str]] | None = None,
     db_path: str | Path | None = None,
     use_cache: bool = True,
+    clarify: bool = True,
 ) -> AgentResult:
     """Answer a natural-language question with a validated read-only SQL query.
 
@@ -199,6 +200,9 @@ def answer(
     total failure `error` is set (the caller shows a friendly message rather
     than crashing). Successful answers are cached (see `use_cache`); pass
     `use_cache=False` to force a fresh generation.
+
+    When `clarify` is set, an ambiguous question may come back as a set of
+    concrete rephrasings (`result.clarification`) instead of a guessed answer.
     """
     question = (question or "").strip()
     if not question:
@@ -227,15 +231,30 @@ def answer(
 
     for attempt in range(1, retries + 2):
         result.attempts = attempt
+        # Offer clarification only on the first attempt: once we're correcting a
+        # failed query we want a fixed SELECT back, not a fresh round of questions.
+        allow_clarify = clarify and attempt == 1
         try:
             messages = build_sql_prompt(
-                schema, question, prior_sql, prior_error, history=history
+                schema,
+                question,
+                prior_sql,
+                prior_error,
+                history=history,
+                allow_clarify=allow_clarify,
             )
             raw = llm(messages)
         except Exception as exc:  # external call — surface, don't crash the app
             logger.error("LLM call failed on attempt %d: %s", attempt, exc)
             result.error = f"The language model could not be reached: {exc}"
             return result
+
+        if allow_clarify:
+            options = _parse_clarification(raw)
+            if options:
+                logger.info("Question is ambiguous; offering %d options", len(options))
+                result.clarification = options
+                return result
 
         candidate = _strip_sql(raw)
         try:

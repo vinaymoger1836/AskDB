@@ -178,6 +178,45 @@ def test_use_cache_false_forces_fresh_generation() -> None:
     assert fake._sql == []
 
 
+def test_ambiguous_question_returns_clarification_options() -> None:
+    # The model declines to guess and offers concrete rephrasings instead.
+    fake = FakeLLM(['CLARIFY: ["Revenue by product", "Units sold by product"]'])
+    result = agent.answer("show me the best products", llm=fake, max_retries=2)
+
+    assert result.needs_clarification
+    assert result.clarification == ["Revenue by product", "Units sold by product"]
+    assert not result.ok  # no query ran…
+    assert result.error is None  # …but it isn't a failure either
+    assert result.sql is None
+    assert result.rows == []
+
+
+def test_clarification_is_parsed_even_when_fenced() -> None:
+    fake = FakeLLM(['```\nCLARIFY: ["Option A", "Option B"]\n```'])
+    result = agent.answer("ambiguous", llm=fake, max_retries=0)
+    assert result.clarification == ["Option A", "Option B"]
+
+
+def test_clarification_can_be_disabled() -> None:
+    # With clarify=False a 'CLARIFY:' reply is treated as (invalid) SQL, not a
+    # question — so it's rejected by the guardrail rather than offered as options.
+    fake = FakeLLM(['CLARIFY: ["a", "b"]'])
+    result = agent.answer("ambiguous", llm=fake, max_retries=0, clarify=False)
+    assert result.clarification is None
+    assert not result.ok
+    assert result.error is not None
+
+
+def test_clarification_is_only_offered_on_the_first_attempt() -> None:
+    # A first-attempt clarification short-circuits; the retry loop never runs, so
+    # only one LLM call is made and no summary is requested.
+    fake = FakeLLM(['CLARIFY: ["only interpretation that matters"]'])
+    result = agent.answer("vague", llm=fake, max_retries=2)
+    assert result.needs_clarification
+    assert result.attempts == 1
+    assert len(fake.calls) == 1
+
+
 def test_run_sql_executes_valid_select() -> None:
     # No LLM is involved: user-supplied SQL runs straight through the guardrail.
     result = agent.run_sql("SELECT name FROM products")

@@ -128,6 +128,7 @@ def _query_in_process(
         "attempts": result.attempts,
         "error": result.error,
         "cached": result.cached,
+        "clarification": result.clarification,
     }
 
 
@@ -309,6 +310,19 @@ def _render_downloads(columns: list[str], rows: list, key_prefix: str) -> None:
         )
 
 
+def _render_clarification(options: list[str], key_prefix: str) -> None:
+    """Show the agent's disambiguation options; picking one re-asks that question."""
+    st.markdown("🤔 That could mean a few things — which did you have in mind?")
+    for index, option in enumerate(options):
+        if st.button(
+            option,
+            key=f"{key_prefix}_clarify_{index}",
+            use_container_width=True,
+        ):
+            st.session_state.rerun_question = option
+            st.rerun()
+
+
 def _render_answer(
     result: dict, show_chart: bool = True, key_prefix: str = "live"
 ) -> None:
@@ -318,6 +332,11 @@ def _render_answer(
     only affects future queries — it never re-renders past turns. `key_prefix`
     keeps each turn's download-button keys unique when the thread is replayed.
     """
+    clarification = result.get("clarification")
+    if clarification:
+        _render_clarification(clarification, key_prefix)
+        return
+
     if result.get("error"):
         st.error(result["error"])
         if result.get("sql"):
