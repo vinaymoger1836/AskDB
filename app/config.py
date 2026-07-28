@@ -56,6 +56,11 @@ class Settings:
         default_factory=lambda: _get("GROQ_MODEL", "llama-3.3-70b-versatile")
     )
     db_path: str = field(default_factory=lambda: _get("DB_PATH", "data/sales.db"))
+    # Writable store for durable app state (audit log, saved queries). Separate
+    # from the read-only analytics DB so runtime writes never touch demo data.
+    state_db_path: str = field(
+        default_factory=lambda: _get("STATE_DB_PATH", "data/askdb_state.db")
+    )
     api_base: str = field(
         default_factory=lambda: _get("ASKDB_API_BASE", "http://localhost:8000")
     )
