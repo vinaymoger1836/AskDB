@@ -13,7 +13,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
-from app import agent, audit
+from app import agent, audit, saved_queries
 from app.config import ConfigError, settings
 from app.db import DatabaseError, get_schema
 from app.ingest import IngestError
@@ -121,6 +121,30 @@ class AuditResponse(BaseModel):
     """Recent guardrail-block events, newest first."""
 
     events: list[AuditEventModel] = []
+
+
+class SavedQueryModel(BaseModel):
+    """A single pinned question, as served by /saved-queries."""
+
+    id: int
+    source_id: str
+    name: str
+    question: str
+    created_at: float
+
+
+class SaveQueryRequest(BaseModel):
+    """A question to pin under a chosen name, scoped to an optional source."""
+
+    name: str = Field(..., min_length=1, max_length=120)
+    question: str = Field(..., min_length=1, max_length=500)
+    source_id: str | None = None
+
+
+class SavedQueriesResponse(BaseModel):
+    """A source's saved queries, newest first."""
+
+    queries: list[SavedQueryModel] = []
 
 
 class QueryResponse(BaseModel):
@@ -238,3 +262,32 @@ def explain(request: ExplainRequest) -> ExplainResponse:
     except RuntimeError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     return ExplainResponse(explanation=explanation)
+
+
+@app.get("/saved-queries", response_model=SavedQueriesResponse)
+def list_saved_queries(source_id: str | None = None) -> SavedQueriesResponse:
+    """Return the saved queries for a source (omit source_id for the demo DB)."""
+    queries = [
+        SavedQueryModel(**sq.to_dict()) for sq in saved_queries.list_for(source_id)
+    ]
+    return SavedQueriesResponse(queries=queries)
+
+
+@app.post("/saved-queries", response_model=SavedQueryModel)
+def save_saved_query(request: SaveQueryRequest) -> SavedQueryModel:
+    """Pin a question under a name for a source; re-saving a name updates it."""
+    try:
+        saved = saved_queries.save(
+            request.name, request.question, source_id=request.source_id
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return SavedQueryModel(**saved.to_dict())
+
+
+@app.delete("/saved-queries")
+def delete_saved_query(name: str, source_id: str | None = None) -> dict[str, bool]:
+    """Remove a saved query by name; 404 if the source has no such name."""
+    if not saved_queries.delete(name, source_id=source_id):
+        raise HTTPException(status_code=404, detail="No saved query with that name.")
+    return {"deleted": True}

@@ -1,4 +1,4 @@
-"""In-memory audit log of guardrail rejections.
+"""Persistent audit log of guardrail rejections.
 
 Whenever a generated or user-edited query is blocked by the guardrail
 (`GuardrailError` — a write, a stacked statement, `SELECT ... INTO`, etc.), the
@@ -6,17 +6,20 @@ reason and the offending SQL are recorded here. This powers the UI's "guardrail
 log" view: a concrete, live record that the safety layer is doing its job —
 "the LLM's SQL is untrusted input, and here's every time we refused to run it."
 
-The log is a bounded, process-local ring buffer. It is diagnostic only — never
-persisted, and it never contains secrets (only SQL text and a reason string).
+Events are stored in the writable state DB (`app.store`) so the log survives a
+process restart, and are pruned to a bounded ring of the newest `_MAX_EVENTS`.
+The log is diagnostic only and never contains secrets (only SQL text and a
+reason string).
 """
 
 from __future__ import annotations
 
 import time
-from collections import deque
 from dataclasses import dataclass
 
-# Cap the buffer so a long-running process can't grow it without bound.
+from app import store
+
+# Cap the log so it can't grow without bound; older rows are pruned on write.
 _MAX_EVENTS = 100
 
 
@@ -39,25 +42,41 @@ class AuditEvent:
         }
 
 
-_events: deque[AuditEvent] = deque(maxlen=_MAX_EVENTS)
-
-
 def record(source: str, reason: str, sql: str) -> None:
-    """Append a guardrail-block event to the log (bounded ring buffer)."""
-    _events.append(
-        AuditEvent(
-            timestamp=time.time(), source=source, reason=reason, sql=(sql or "").strip()
+    """Append a guardrail-block event, pruning the log to the newest _MAX_EVENTS."""
+    with store.connect() as conn:
+        conn.execute(
+            "INSERT INTO audit_events (timestamp, source, reason, sql) "
+            "VALUES (?, ?, ?, ?)",
+            (time.time(), source, reason, (sql or "").strip()),
         )
-    )
+        conn.execute(
+            "DELETE FROM audit_events WHERE id NOT IN "
+            "(SELECT id FROM audit_events ORDER BY id DESC LIMIT ?)",
+            (_MAX_EVENTS,),
+        )
 
 
 def recent(limit: int = _MAX_EVENTS) -> list[AuditEvent]:
     """Return the most recent events, newest first (up to `limit`)."""
-    events = list(_events)[-limit:]
-    events.reverse()
-    return events
+    with store.connect() as conn:
+        rows = conn.execute(
+            "SELECT timestamp, source, reason, sql FROM audit_events "
+            "ORDER BY id DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+    return [
+        AuditEvent(
+            timestamp=row["timestamp"],
+            source=row["source"],
+            reason=row["reason"],
+            sql=row["sql"],
+        )
+        for row in rows
+    ]
 
 
 def clear() -> None:
     """Empty the audit log (used by tests and after a fresh start)."""
-    _events.clear()
+    with store.connect() as conn:
+        conn.execute("DELETE FROM audit_events")

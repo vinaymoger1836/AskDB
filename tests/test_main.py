@@ -94,6 +94,38 @@ def test_audit_endpoint_records_a_blocked_query() -> None:
     assert "DROP" in events[0]["sql"].upper()
 
 
+def test_saved_query_save_list_delete_flow() -> None:
+    save = client.post(
+        "/saved-queries",
+        json={"name": "Top products", "question": "What are the top products?"},
+    )
+    assert save.status_code == 200
+    assert save.json()["name"] == "Top products"
+
+    listed = client.get("/saved-queries").json()["queries"]
+    assert [q["name"] for q in listed] == ["Top products"]
+
+    deleted = client.request("DELETE", "/saved-queries", params={"name": "Top products"})
+    assert deleted.status_code == 200
+    assert deleted.json() == {"deleted": True}
+    assert client.get("/saved-queries").json()["queries"] == []
+
+
+def test_saved_query_scoped_by_source_id() -> None:
+    client.post(
+        "/saved-queries",
+        json={"name": "u", "question": "q", "source_id": "src-1"},
+    )
+    assert client.get("/saved-queries").json()["queries"] == []
+    scoped = client.get("/saved-queries", params={"source_id": "src-1"}).json()
+    assert [q["name"] for q in scoped["queries"]] == ["u"]
+
+
+def test_delete_unknown_saved_query_is_404() -> None:
+    resp = client.request("DELETE", "/saved-queries", params={"name": "missing"})
+    assert resp.status_code == 404
+
+
 def test_query_resolves_uploaded_source_to_its_db_path(monkeypatch) -> None:
     source_id = _upload("sales.csv", b"item,qty\nx,1\n").json()["source_id"]
 

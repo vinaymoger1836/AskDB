@@ -29,6 +29,15 @@ from app.config import ConfigError, settings  # noqa: E402
 from app.export import to_csv_bytes, to_excel_bytes  # noqa: E402
 from app.ingest import IngestError, ingest_upload  # noqa: E402
 from app.logging_config import configure_logging  # noqa: E402
+from app.saved_queries import (  # noqa: E402
+    delete as delete_saved_query,
+)
+from app.saved_queries import (  # noqa: E402
+    list_for as list_saved_queries,
+)
+from app.saved_queries import (  # noqa: E402
+    save as save_saved_query,
+)
 from data.seed import ensure_database  # noqa: E402
 
 configure_logging()
@@ -411,20 +420,13 @@ def _record_question(question: str) -> None:
     del history[_MAX_HISTORY:]
 
 
-def _saved_map() -> dict[str, str]:
-    """Return the saved-query {name: question} map for the active source.
-
-    Saved queries are curated favourites: unlike recent questions they are
-    user-named, never auto-evicted, and survive clearing the chat.
-    """
-    return st.session_state.saved_queries.setdefault(
-        st.session_state.active_source, {}
-    )
-
-
 def _save_query(name: str, question: str) -> None:
-    """Pin a question under a chosen name for the active source."""
-    _saved_map()[name] = question
+    """Pin a question under a chosen name for the active source (persisted)."""
+    try:
+        save_saved_query(name, question, source_id=st.session_state.active_source)
+    except ValueError:
+        # An empty name/question is a no-op rather than a UI error.
+        pass
 
 
 def _handle_question(question: str) -> None:
@@ -564,21 +566,21 @@ def _render_audit() -> None:
 
 def _render_saved() -> None:
     """List saved queries for the active source; re-run or delete each one."""
-    saved = _saved_map()
+    saved = list_saved_queries(st.session_state.active_source)
     if not saved:
         return
     st.subheader("⭐ Saved queries")
-    for index, (name, question) in enumerate(list(saved.items())):
+    for index, sq in enumerate(saved):
         col_run, col_del = st.columns([5, 1])
         with col_run:
             if st.button(
-                name, key=f"saved_{index}", use_container_width=True, help=question
+                sq.name, key=f"saved_{index}", use_container_width=True, help=sq.question
             ):
-                st.session_state.rerun_question = question
+                st.session_state.rerun_question = sq.question
                 st.rerun()
         with col_del:
-            if st.button("🗑", key=f"saveddel_{index}", help=f"Remove “{name}”"):
-                del saved[name]
+            if st.button("🗑", key=f"saveddel_{index}", help=f"Remove “{sq.name}”"):
+                delete_saved_query(sq.name, source_id=st.session_state.active_source)
                 st.rerun()
 
 
@@ -675,9 +677,6 @@ def main() -> None:
     # Recent questions per source, for one-click re-runs from the sidebar.
     if "query_history" not in st.session_state:
         st.session_state.query_history = {}
-    # User-curated saved queries per source (survive clearing the chat).
-    if "saved_queries" not in st.session_state:
-        st.session_state.saved_queries = {}
 
     _sidebar()
 
