@@ -32,6 +32,20 @@ _SQL_SYSTEM = (
     "'break it down by month') — but always answer the CURRENT question."
 )
 
+# Appended to the system prompt only on the first attempt: lets the model decline
+# to guess and ask the user to choose between concrete interpretations instead.
+_CLARIFY_INSTRUCTION = (
+    "\n\nAmbiguity handling: if the question is genuinely ambiguous or cannot be "
+    "grounded in the schema (an unclear metric, an unspecified entity, or a term "
+    "that could map to several columns), DO NOT guess. Instead reply with a "
+    "SINGLE line starting with 'CLARIFY:' followed by a JSON array of 2-3 "
+    "specific, self-contained rephrasings the user could pick from — each a "
+    "complete question fully answerable from the schema. Example:\n"
+    'CLARIFY: ["Total revenue by product in 2023", "Units sold by product in 2023"]\n'
+    "Only clarify when truly necessary; if a reasonable default interpretation "
+    "exists, just answer it with SQL."
+)
+
 # Keep the prompt bounded: only the most recent turns are useful for follow-ups.
 _MAX_HISTORY_TURNS = 3
 
