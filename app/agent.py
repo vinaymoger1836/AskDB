@@ -7,6 +7,7 @@ hitting Groq.
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from collections import OrderedDict
@@ -42,11 +43,20 @@ class AgentResult:
     attempts: int = 0
     error: str | None = None
     cached: bool = False  # True when this answer was served from a cache
+    # When set, the question was ambiguous: concrete rephrasings for the user to
+    # pick from. No SQL ran (sql/rows empty, error None) — the caller should ask
+    # the user to choose rather than treating this as a failure.
+    clarification: list[str] | None = None
 
     @property
     def ok(self) -> bool:
         """True when a query ran successfully."""
         return self.error is None and self.sql is not None
+
+    @property
+    def needs_clarification(self) -> bool:
+        """True when the agent is asking the user to disambiguate the question."""
+        return bool(self.clarification)
 
 
 # --- Result cache ---------------------------------------------------------
@@ -119,6 +129,32 @@ def _strip_sql(text: str) -> str:
         # Drop the opening fence line and any trailing fence.
         cleaned = _FENCE_RE.sub("", cleaned)
     return cleaned.strip().rstrip(";").strip()
+
+
+# Max distinct interpretations to offer the user (keeps the choice manageable).
+_MAX_CLARIFY_OPTIONS = 3
+
+
+def _parse_clarification(text: str) -> list[str] | None:
+    """Extract clarification options from a 'CLARIFY: [...]' reply, else None.
+
+    Returns up to `_MAX_CLARIFY_OPTIONS` non-empty rephrasings, or None when the
+    reply isn't a clarification (i.e. it's ordinary SQL).
+    """
+    cleaned = text.strip()
+    if cleaned.startswith("```"):
+        cleaned = _FENCE_RE.sub("", cleaned).strip()
+    if not cleaned[:8].upper().startswith("CLARIFY:"):
+        return None
+    payload = cleaned[cleaned.index(":") + 1 :].strip()
+    try:
+        options = json.loads(payload)
+    except (json.JSONDecodeError, ValueError):
+        return None
+    if not isinstance(options, list):
+        return None
+    cleaned_options = [str(opt).strip() for opt in options if str(opt).strip()]
+    return cleaned_options[:_MAX_CLARIFY_OPTIONS] or None
 
 
 def _default_llm() -> LLM:

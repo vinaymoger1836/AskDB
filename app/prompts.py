@@ -71,13 +71,16 @@ def build_sql_prompt(
     prior_sql: str | None = None,
     prior_error: str | None = None,
     history: list[dict[str, str]] | None = None,
+    allow_clarify: bool = False,
 ) -> list[dict[str, str]]:
     """Build the chat messages that ask the LLM for a SQL query.
 
     `history` (prior question/SQL turns) lets follow-up questions resolve. When
     `prior_error` is provided, the previous (failed) SQL and its error are
-    included so the model can correct itself.
+    included so the model can correct itself. When `allow_clarify` is set (the
+    first attempt), the model may instead ask the user to disambiguate.
     """
+    system = _SQL_SYSTEM + (_CLARIFY_INSTRUCTION if allow_clarify else "")
     context = _format_history(history)
     if prior_error:
         user = (
@@ -95,7 +98,7 @@ def build_sql_prompt(
             f"Question: {question}\n\nSQL query:"
         )
     return [
-        {"role": "system", "content": _SQL_SYSTEM},
+        {"role": "system", "content": system},
         {"role": "user", "content": user},
     ]
 
