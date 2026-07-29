@@ -50,6 +50,10 @@ class Settings:
 
     # --- Secrets (no default; required for the features that use them) ---
     groq_api_key: str | None = field(default_factory=lambda: _get("GROQ_API_KEY"))
+    # Optional gate for the HTTP API. When set, callers must send a matching
+    # `X-API-Key` header; when unset (the default), the API is open — so local
+    # dev and the HF single-service UI keep working with no configuration.
+    api_key: str | None = field(default_factory=lambda: _get("ASKDB_API_KEY"))
 
     # --- Tunables (safe defaults) ---
     groq_model: str = field(
@@ -72,6 +76,12 @@ class Settings:
     )
     query_timeout_s: int = field(default_factory=lambda: _get_int("QUERY_TIMEOUT_S", 5))
     max_upload_mb: int = field(default_factory=lambda: _get_int("MAX_UPLOAD_MB", 25))
+    # Per-IP request cap per minute on the costly API endpoints. 0 (the default)
+    # disables it — the public deployment is the Streamlit app, not the open API,
+    # so like the API key this is opt-in and enabled when the API is exposed.
+    rate_limit_per_min: int = field(
+        default_factory=lambda: _get_int("ASKDB_RATE_LIMIT_PER_MIN", 0)
+    )
 
     def require(self, *names: str) -> None:
         """Raise ConfigError if any named secret attribute is unset.

@@ -10,7 +10,7 @@ import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
 from app import agent, audit, saved_queries
@@ -18,8 +18,14 @@ from app.config import ConfigError, settings
 from app.db import DatabaseError, get_schema
 from app.ingest import IngestError
 from app.logging_config import configure_logging
+from app.security import enforce_rate_limit, require_api_key
 from app.sources import SourceRegistry
 from data.seed import ensure_database
+
+# Applied to endpoints that cost compute or accept uploads. Both dependencies are
+# no-ops unless configured (ASKDB_API_KEY / ASKDB_RATE_LIMIT_PER_MIN), so the
+# default open API is unchanged for local dev and the HF single-service UI.
+_PROTECTED = [Depends(require_api_key), Depends(enforce_rate_limit)]
 
 configure_logging()
 logger = logging.getLogger(__name__)
@@ -190,7 +196,7 @@ def schema(source_id: str | None = None) -> dict[str, str]:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
-@app.post("/upload", response_model=UploadResponse)
+@app.post("/upload", response_model=UploadResponse, dependencies=_PROTECTED)
 async def upload(file: UploadFile = File(...)) -> UploadResponse:
     """Ingest a CSV/Excel file into a queryable source; return its opaque ID."""
     data = await file.read()
@@ -213,7 +219,7 @@ async def upload(file: UploadFile = File(...)) -> UploadResponse:
     )
 
 
-@app.post("/query", response_model=QueryResponse)
+@app.post("/query", response_model=QueryResponse, dependencies=_PROTECTED)
 def query(request: QueryRequest) -> QueryResponse:
     """Answer a question: generate, validate, execute, and summarise SQL."""
     db_path = _resolve_source(request.source_id)
@@ -244,7 +250,7 @@ def query(request: QueryRequest) -> QueryResponse:
     )
 
 
-@app.post("/run-sql", response_model=QueryResponse)
+@app.post("/run-sql", response_model=QueryResponse, dependencies=_PROTECTED)
 def run_sql(request: RunSqlRequest) -> QueryResponse:
     """Run user-edited SQL through the guardrail and execute it read-only (no LLM)."""
     db_path = _resolve_source(request.source_id)
@@ -274,7 +280,7 @@ def audit_log(limit: int = 50) -> AuditResponse:
     return AuditResponse(events=events)
 
 
-@app.post("/explain", response_model=ExplainResponse)
+@app.post("/explain", response_model=ExplainResponse, dependencies=_PROTECTED)
 def explain(request: ExplainRequest) -> ExplainResponse:
     """Return a plain-English explanation of a generated SQL query."""
     try:
