@@ -88,12 +88,18 @@ _CHAT_CSS = """
 """
 
 
+def _api_headers() -> dict[str, str]:
+    """Auth header for the API when a key is configured (else empty)."""
+    return {"X-API-Key": settings.api_key} if settings.api_key else {}
+
+
 def _query_via_api(question: str, history: list[dict]) -> dict | None:
     """Try the FastAPI backend. Return the parsed response, or None if unreachable."""
     try:
         resp = requests.post(
             f"{settings.api_base}/query",
             json={"question": question, "history": history},
+            headers=_api_headers(),
             timeout=60,
         )
     except requests.RequestException:
@@ -157,7 +163,10 @@ def _run_sql_via_api(sql: str) -> dict | None:
     """Try the FastAPI /run-sql backend. Return the response, or None if unreachable."""
     try:
         resp = requests.post(
-            f"{settings.api_base}/run-sql", json={"sql": sql}, timeout=60
+            f"{settings.api_base}/run-sql",
+            json={"sql": sql},
+            headers=_api_headers(),
+            timeout=60,
         )
     except requests.RequestException:
         return None
@@ -226,7 +235,10 @@ def _explain_query(sql: str) -> str:
     """Explain a query via the FastAPI backend when reachable, else in-process."""
     try:
         resp = requests.post(
-            f"{settings.api_base}/explain", json={"sql": sql}, timeout=60
+            f"{settings.api_base}/explain",
+            json={"sql": sql},
+            headers=_api_headers(),
+            timeout=60,
         )
         if resp.status_code < 500:
             resp.raise_for_status()
