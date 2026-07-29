@@ -147,6 +147,14 @@ class SavedQueriesResponse(BaseModel):
     queries: list[SavedQueryModel] = []
 
 
+class ValueSuggestionModel(BaseModel):
+    """A zero-row filter and the closest real values, as served with a result."""
+
+    column: str
+    given: str
+    candidates: list[str] = []
+
+
 class QueryResponse(BaseModel):
     """The agent's answer: SQL, tabular result, summary, and diagnostics."""
 
@@ -160,6 +168,8 @@ class QueryResponse(BaseModel):
     cached: bool = False
     # Concrete rephrasings offered when the question was too ambiguous to answer.
     clarification: list[str] | None = None
+    # "Did you mean" values when a valid query returned no rows.
+    suggestions: list[ValueSuggestionModel] = []
 
 
 @app.get("/health")
@@ -227,6 +237,7 @@ def query(request: QueryRequest) -> QueryResponse:
         error=result.error,
         cached=result.cached,
         clarification=result.clarification,
+        suggestions=[s.to_dict() for s in result.suggestions],
     )
 
 
@@ -248,6 +259,7 @@ def run_sql(request: RunSqlRequest) -> QueryResponse:
         attempts=result.attempts,
         error=result.error,
         cached=result.cached,
+        suggestions=[s.to_dict() for s in result.suggestions],
     )
 
 

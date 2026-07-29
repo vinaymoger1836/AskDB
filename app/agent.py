@@ -20,6 +20,7 @@ from app.config import settings
 from app.db import QueryError, get_schema, run_query
 from app.guardrails import GuardrailError, validate_and_prepare
 from app.prompts import build_explain_prompt, build_sql_prompt, build_summary_prompt
+from app.suggest import ValueSuggestion, suggest_values
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +48,9 @@ class AgentResult:
     # pick from. No SQL ran (sql/rows empty, error None) — the caller should ask
     # the user to choose rather than treating this as a failure.
     clarification: list[str] | None = None
+    # Populated only when a valid query returned zero rows: for each string
+    # filter that matched nothing, the closest real values from the data.
+    suggestions: list[ValueSuggestion] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
@@ -119,7 +123,23 @@ def _cache_key(
 
 def _copy_result(result: AgentResult) -> AgentResult:
     """Return a defensive copy so callers can't mutate cached state in place."""
-    return replace(result, columns=list(result.columns), rows=list(result.rows))
+    return replace(
+        result,
+        columns=list(result.columns),
+        rows=list(result.rows),
+        suggestions=list(result.suggestions),
+    )
+
+
+def _suggest_for_empty(
+    safe_sql: str, db_path: str | Path | None
+) -> list[ValueSuggestion]:
+    """Best-effort value suggestions for a zero-row query (never raises)."""
+    try:
+        return suggest_values(safe_sql, db_path)
+    except Exception as exc:  # a failed suggestion must never break the answer
+        logger.debug("Value suggestion failed: %s", exc)
+        return []
 
 
 def _strip_sql(text: str) -> str:
@@ -277,6 +297,10 @@ def answer(
         result.columns = columns
         result.rows = rows
         result.error = None
+        # A valid-but-empty result is often a value typo in a filter; offer the
+        # closest real values from the data instead of a silent blank table.
+        if not rows:
+            result.suggestions = _suggest_for_empty(safe_sql, db_path)
         result.summary = _summarise(llm, question, columns, rows)
         if key is not None:
             _cache[key] = _copy_result(result)
@@ -326,6 +350,8 @@ def run_sql(
     result.columns = columns
     result.rows = rows
     result.cached = from_cache
+    if not rows:
+        result.suggestions = _suggest_for_empty(safe_sql, db_path)
     return result
 
 

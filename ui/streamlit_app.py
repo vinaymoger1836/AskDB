@@ -38,6 +38,7 @@ from app.saved_queries import (  # noqa: E402
 from app.saved_queries import (  # noqa: E402
     save as save_saved_query,
 )
+from app.suggest import apply_suggestion  # noqa: E402
 from data.seed import ensure_database  # noqa: E402
 
 configure_logging()
@@ -129,6 +130,7 @@ def _query_in_process(
         "error": result.error,
         "cached": result.cached,
         "clarification": result.clarification,
+        "suggestions": [s.to_dict() for s in result.suggestions],
     }
 
 
@@ -179,6 +181,7 @@ def _run_sql_in_process(sql: str, db_path: str | None) -> dict:
         "attempts": result.attempts,
         "error": result.error,
         "cached": result.cached,
+        "suggestions": [s.to_dict() for s in result.suggestions],
     }
 
 
@@ -323,6 +326,34 @@ def _render_clarification(options: list[str], key_prefix: str) -> None:
             st.rerun()
 
 
+def _render_suggestions(
+    suggestions: list[dict], sql: str, key_prefix: str
+) -> None:
+    """Show 'did you mean' chips for a zero-row query; a click re-runs the fix.
+
+    Each candidate is a real value from the data. Picking one rewrites the
+    offending filter and re-runs the query through the same guardrail.
+    """
+    st.info("The query ran but returned no rows.")
+    for s_index, suggestion in enumerate(suggestions):
+        given = suggestion["given"].strip("%")
+        st.caption(
+            f"No match for **{suggestion['column']} = “{given}”**. Did you mean:"
+        )
+        cols = st.columns(len(suggestion["candidates"]))
+        for c_index, candidate in enumerate(suggestion["candidates"]):
+            with cols[c_index]:
+                if st.button(
+                    candidate,
+                    key=f"{key_prefix}_sugg_{s_index}_{c_index}",
+                    use_container_width=True,
+                ):
+                    st.session_state.pending_sql = apply_suggestion(
+                        sql, suggestion["column"], suggestion["given"], candidate
+                    )
+                    st.rerun()
+
+
 def _render_answer(
     result: dict, show_chart: bool = True, key_prefix: str = "live"
 ) -> None:
@@ -370,7 +401,11 @@ def _render_answer(
         _render_save(question, key_prefix)
 
     if not rows:
-        st.info("The query ran but returned no rows.")
+        suggestions = result.get("suggestions") or []
+        if suggestions:
+            _render_suggestions(suggestions, sql, key_prefix)
+        else:
+            st.info("The query ran but returned no rows.")
         return
 
     # A single numeric answer reads best as a headline metric, not a 1-cell table.
