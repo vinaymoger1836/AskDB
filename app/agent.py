@@ -19,6 +19,7 @@ from app import audit
 from app.config import settings
 from app.db import QueryError, get_schema, run_query
 from app.guardrails import GuardrailError, validate_and_prepare
+from app.insights import compute_insights
 from app.prompts import build_explain_prompt, build_sql_prompt, build_summary_prompt
 from app.suggest import ValueSuggestion, suggest_values
 
@@ -51,6 +52,9 @@ class AgentResult:
     # Populated only when a valid query returned zero rows: for each string
     # filter that matched nothing, the closest real values from the data.
     suggestions: list[ValueSuggestion] = field(default_factory=list)
+    # Grounded one-line facts computed from the result rows (sum, top, spread,
+    # trend). Empty unless the result has a numeric measure to describe.
+    insights: list[str] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
@@ -128,6 +132,7 @@ def _copy_result(result: AgentResult) -> AgentResult:
         columns=list(result.columns),
         rows=list(result.rows),
         suggestions=list(result.suggestions),
+        insights=list(result.insights),
     )
 
 
@@ -139,6 +144,15 @@ def _suggest_for_empty(
         return suggest_values(safe_sql, db_path)
     except Exception as exc:  # a failed suggestion must never break the answer
         logger.debug("Value suggestion failed: %s", exc)
+        return []
+
+
+def _insights_for(columns: list[str], rows: list[tuple]) -> list[str]:
+    """Best-effort grounded insights for a non-empty result (never raises)."""
+    try:
+        return compute_insights(columns, rows)
+    except Exception as exc:  # insight computation must never break the answer
+        logger.debug("Insight computation failed: %s", exc)
         return []
 
 
@@ -301,6 +315,8 @@ def answer(
         # closest real values from the data instead of a silent blank table.
         if not rows:
             result.suggestions = _suggest_for_empty(safe_sql, db_path)
+        else:
+            result.insights = _insights_for(columns, rows)
         result.summary = _summarise(llm, question, columns, rows)
         if key is not None:
             _cache[key] = _copy_result(result)
