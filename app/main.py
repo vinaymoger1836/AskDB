@@ -170,6 +170,8 @@ class QueryResponse(BaseModel):
     clarification: list[str] | None = None
     # "Did you mean" values when a valid query returned no rows.
     suggestions: list[ValueSuggestionModel] = []
+    # Grounded one-line facts computed from the result rows (sum, top, spread).
+    insights: list[str] = []
 
 
 @app.get("/health")
@@ -238,6 +240,7 @@ def query(request: QueryRequest) -> QueryResponse:
         cached=result.cached,
         clarification=result.clarification,
         suggestions=[s.to_dict() for s in result.suggestions],
+        insights=result.insights,
     )
 
 
@@ -260,6 +263,7 @@ def run_sql(request: RunSqlRequest) -> QueryResponse:
         error=result.error,
         cached=result.cached,
         suggestions=[s.to_dict() for s in result.suggestions],
+        insights=result.insights,
     )
 
 

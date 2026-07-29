@@ -368,6 +368,8 @@ def run_sql(
     result.cached = from_cache
     if not rows:
         result.suggestions = _suggest_for_empty(safe_sql, db_path)
+    else:
+        result.insights = _insights_for(columns, rows)
     return result
 
 

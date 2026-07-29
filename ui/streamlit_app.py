@@ -131,6 +131,7 @@ def _query_in_process(
         "cached": result.cached,
         "clarification": result.clarification,
         "suggestions": [s.to_dict() for s in result.suggestions],
+        "insights": result.insights,
     }
 
 
@@ -182,6 +183,7 @@ def _run_sql_in_process(sql: str, db_path: str | None) -> dict:
         "error": result.error,
         "cached": result.cached,
         "suggestions": [s.to_dict() for s in result.suggestions],
+        "insights": result.insights,
     }
 
 
@@ -412,6 +414,13 @@ def _render_answer(
     kpi = single_value(columns, [tuple(r) for r in rows])
     if kpi is not None:
         st.metric(kpi[0], _format_metric(kpi[1]))
+
+    insights = result.get("insights") or []
+    if insights:
+        with st.container(border=True):
+            st.caption("📊 At a glance — computed from these rows:")
+            for line in insights:
+                st.markdown(f"- {line}")
 
     st.dataframe(
         [dict(zip(columns, r, strict=False)) for r in rows],
