@@ -217,6 +217,30 @@ def test_clarification_is_only_offered_on_the_first_attempt() -> None:
     assert len(fake.calls) == 1
 
 
+def test_empty_result_offers_value_suggestions() -> None:
+    # A valid query whose filter names a misspelled value returns no rows — the
+    # agent attaches the closest real values instead of a silent blank table.
+    fake = FakeLLM(["SELECT name FROM customers WHERE country = 'Germny'"])
+    result = agent.answer("customers in Germny", llm=fake, max_retries=0)
+
+    assert result.ok  # the query itself ran fine…
+    assert result.rows == []  # …it just matched nothing
+    assert result.suggestions
+    assert "Germany" in result.suggestions[0].candidates
+
+
+def test_non_empty_result_has_no_suggestions() -> None:
+    fake = FakeLLM(["SELECT name FROM products"])
+    result = agent.answer("all product names", llm=fake, max_retries=0)
+    assert result.rows and result.suggestions == []
+
+
+def test_run_sql_empty_result_offers_suggestions() -> None:
+    result = agent.run_sql("SELECT name FROM customers WHERE country = 'Germny'")
+    assert result.ok and result.rows == []
+    assert result.suggestions and "Germany" in result.suggestions[0].candidates
+
+
 def test_run_sql_executes_valid_select() -> None:
     # No LLM is involved: user-supplied SQL runs straight through the guardrail.
     result = agent.run_sql("SELECT name FROM products")

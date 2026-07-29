@@ -27,6 +27,15 @@ from app.db import DatabaseError, get_connection
 logger = logging.getLogger(__name__)
 
 _DIALECT = "sqlite"
+# Predicate node types we inspect, built dynamically so the module stays valid
+# across sqlglot versions (mirrors the guardrails approach). EQ always exists;
+# ILike is guarded in case an older release lacks it.
+_PREDICATE_TYPES = tuple(
+    getattr(exp, name) for name in ("EQ", "Like", "ILike") if hasattr(exp, name)
+)
+_LIKE_TYPES = tuple(
+    getattr(exp, name) for name in ("Like", "ILike") if hasattr(exp, name)
+)
 # Cap the distinct values scanned per column so suggesting stays cheap even on
 # wide categorical columns; the closest matches are almost always near the top.
 _MAX_DISTINCT = 500
@@ -62,7 +71,7 @@ _Filter = tuple[str, str | None, str, bool]
 def _string_filters(statement: exp.Expression) -> list[_Filter]:
     """Collect `column = 'text'` / `column LIKE 'text'` predicates from the tree."""
     filters: list[_Filter] = []
-    for node in statement.find_all(exp.EQ, exp.Like, exp.ILike):
+    for node in statement.find_all(*_PREDICATE_TYPES):
         col, lit = node.this, node.expression
         if not (isinstance(col, exp.Column) and isinstance(lit, exp.Literal)):
             col, lit = node.expression, node.this  # operands may be reversed
@@ -70,7 +79,7 @@ def _string_filters(statement: exp.Expression) -> list[_Filter]:
             continue
         if not lit.is_string:
             continue  # numeric filters have no useful "did you mean" list
-        is_like = isinstance(node, (exp.Like, exp.ILike))
+        is_like = isinstance(node, _LIKE_TYPES)
         filters.append((col.name, col.table or None, lit.this, is_like))
     return filters
 
@@ -199,7 +208,7 @@ def apply_suggestion(sql: str, column: str, given: str, new_value: str) -> str:
     except ParseError:
         return sql
     target = column.lower()
-    for node in statement.find_all(exp.EQ, exp.Like, exp.ILike):
+    for node in statement.find_all(*_PREDICATE_TYPES):
         col, lit = node.this, node.expression
         if not (isinstance(col, exp.Column) and isinstance(lit, exp.Literal)):
             col, lit = node.expression, node.this
@@ -208,7 +217,7 @@ def apply_suggestion(sql: str, column: str, given: str, new_value: str) -> str:
         if not lit.is_string or col.name.lower() != target or lit.this != given:
             continue
         replacement = new_value
-        if isinstance(node, (exp.Like, exp.ILike)):
+        if isinstance(node, _LIKE_TYPES):
             prefix = "%" if given.startswith("%") else ""
             suffix = "%" if given.endswith("%") else ""
             replacement = f"{prefix}{new_value}{suffix}"

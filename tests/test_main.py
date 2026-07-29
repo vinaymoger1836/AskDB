@@ -149,6 +149,18 @@ def test_query_returns_clarification_options(monkeypatch) -> None:
     assert body["error"] is None
 
 
+def test_run_sql_empty_result_returns_suggestions() -> None:
+    from app import agent
+
+    agent.clear_cache()
+    body = {"sql": "SELECT name FROM customers WHERE country = 'Germny'"}
+    resp = client.post("/run-sql", json=body).json()
+    assert resp["rows"] == []
+    assert resp["suggestions"]
+    assert resp["suggestions"][0]["column"] == "country"
+    assert "Germany" in resp["suggestions"][0]["candidates"]
+
+
 def test_query_resolves_uploaded_source_to_its_db_path(monkeypatch) -> None:
     source_id = _upload("sales.csv", b"item,qty\nx,1\n").json()["source_id"]
 
