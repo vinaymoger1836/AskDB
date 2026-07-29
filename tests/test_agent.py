@@ -241,6 +241,31 @@ def test_run_sql_empty_result_offers_suggestions() -> None:
     assert result.suggestions and "Germany" in result.suggestions[0].candidates
 
 
+def test_multi_row_numeric_result_gets_grounded_insights() -> None:
+    # A grouped numeric result should carry a factual insight strip.
+    fake = FakeLLM(
+        ["SELECT category, COUNT(*) AS n FROM products GROUP BY category"]
+    )
+    result = agent.answer("products per category", llm=fake, max_retries=0)
+
+    assert result.ok and result.rows
+    assert result.insights
+    assert any("Sum of" in line for line in result.insights)
+
+
+def test_text_only_result_has_no_insights() -> None:
+    fake = FakeLLM(["SELECT name FROM products"])
+    result = agent.answer("product names", llm=fake, max_retries=0)
+    assert result.ok and result.rows and result.insights == []
+
+
+def test_run_sql_attaches_insights() -> None:
+    result = agent.run_sql(
+        "SELECT category, COUNT(*) AS n FROM products GROUP BY category"
+    )
+    assert result.ok and result.insights
+
+
 def test_run_sql_executes_valid_select() -> None:
     # No LLM is involved: user-supplied SQL runs straight through the guardrail.
     result = agent.run_sql("SELECT name FROM products")

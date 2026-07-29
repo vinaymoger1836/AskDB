@@ -161,6 +161,17 @@ def test_run_sql_empty_result_returns_suggestions() -> None:
     assert "Germany" in resp["suggestions"][0]["candidates"]
 
 
+def test_run_sql_returns_grounded_insights() -> None:
+    from app import agent
+
+    agent.clear_cache()
+    body = {"sql": "SELECT category, COUNT(*) AS n FROM products GROUP BY category"}
+    resp = client.post("/run-sql", json=body).json()
+    assert resp["rows"]
+    assert resp["insights"]
+    assert any("Sum of" in line for line in resp["insights"])
+
+
 def test_query_resolves_uploaded_source_to_its_db_path(monkeypatch) -> None:
     source_id = _upload("sales.csv", b"item,qty\nx,1\n").json()["source_id"]
 
